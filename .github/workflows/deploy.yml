@@ -3,6 +3,9 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+  # Daily rebuild so the bundled data snapshot never drifts far from the present.
+  schedule:
+    - cron: '17 6 * * *' # 06:17 UTC
   workflow_dispatch:
 
 permissions:
