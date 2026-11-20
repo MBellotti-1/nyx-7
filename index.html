@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NYX-7 // Planetary Link</title>
+  <meta name="description" content="A holographic command core wired to the real planet: every active satellite, the last week of earthquakes, wildfires and space weather — live, in 3D." />
+  <meta property="og:title" content="NYX-7 // Planetary Link" />
+  <meta property="og:description" content="Every satellite in orbit. Every earthquake this week. The real Earth, live, as a hologram you can touch." />
+  <meta name="theme-color" content="#01030a" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2301030a'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%2335e8ff' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%2335e8ff'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body class="mode-holo view-core">
+  <canvas id="scene"></canvas>
+  <svg id="leaders" aria-hidden="true"></svg>
+  <div id="labels" aria-hidden="true"></div>
+
+  <div id="hud">
+    <div class="frame"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>
+
+    <header class="top">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true">
+          <circle class="spin-a" cx="32" cy="32" r="28" fill="none" stroke-width="1.5" stroke-dasharray="44 12 6 12" />
+          <circle class="spin-b" cx="32" cy="32" r="21" fill="none" stroke-width="3" stroke-dasharray="3 5" />
+          <polygon points="32,17 45,24.5 45,39.5 32,47 19,39.5 19,24.5" fill="none" stroke-width="1.5" />
+          <circle class="pip" cx="32" cy="32" r="4.5" />
+        </svg>
+        <div>
+          <div class="brand-name">NYX<span>-7</span></div>
+          <div class="brand-sub">COGNITIVE CORE · PLANETARY LINK</div>
+        </div>
+      </div>
+
+      <div class="status">
+        <span class="dot"></span><span id="statusText">ALL SYSTEMS NOMINAL</span>
+        <span class="sep">//</span>LAYER <b id="modeName">HOLO</b>
+        <span class="sep">//</span>T× <b id="timeScale">1.00</b>
+      </div>
+
+      <div class="clock">
+        <div id="clock">00:00:00<small>.000</small></div>
+        <div id="date">—</div>
+      </div>
+    </header>
+
+    <aside class="left">
+      <section class="panel">
+        <h3><span>01</span>CORE TELEMETRY</h3>
+        <div class="gauges">
+          <div class="gauge" data-g="output">
+            <svg viewBox="0 0 80 80"><circle class="track" cx="40" cy="40" r="32" /><circle class="val" cx="40" cy="40" r="32" /><circle class="ticks" cx="40" cy="40" r="38" /></svg>
+            <b>00</b><label>OUTPUT</label>
+          </div>
+          <div class="gauge" data-g="stability">
+            <svg viewBox="0 0 80 80"><circle class="track" cx="40" cy="40" r="32" /><circle class="val" cx="40" cy="40" r="32" /><circle class="ticks" cx="40" cy="40" r="38" /></svg>
+            <b>00</b><label>STABILITY</label>
+          </div>
+          <div class="gauge" data-g="entropy">
+            <svg viewBox="0 0 80 80"><circle class="track" cx="40" cy="40" r="32" /><circle class="val" cx="40" cy="40" r="32" /><circle class="ticks" cx="40" cy="40" r="38" /></svg>
+            <b>00</b><label>ENTROPY</label>
+          </div>
+        </div>
+        <canvas id="wave" width="560" height="120"></canvas>
+      </section>
+
+      <section class="panel" id="feeds">
+        <h3><span>02</span>PLANETARY FEED <em>REAL DATA</em></h3>
+        <ul>
+          <li data-feed="quakes" data-status="pending"><i></i><b>SEISMIC</b><em>USGS</em><span>CONNECTING…</span></li>
+          <li data-feed="sats" data-status="pending"><i></i><b>ORBITAL</b><em>CELESTRAK</em><span>CONNECTING…</span></li>
+          <li data-feed="iss" data-status="pending"><i></i><b>ISS</b><em>NORAD 25544</em><span>ACQUIRING…</span></li>
+          <li data-feed="wind" data-status="pending"><i></i><b>SOLAR WIND</b><em>NOAA</em><span>CONNECTING…</span></li>
+          <li data-feed="kp" data-status="pending"><i></i><b>GEOMAGNETIC</b><em>NOAA</em><span>CONNECTING…</span></li>
+          <li data-feed="events" data-status="pending"><i></i><b>EVENTS</b><em>NASA EONET</em><span>CONNECTING…</span></li>
+        </ul>
+      </section>
+
+      <section class="panel grow">
+        <h3><span>03</span>SYSTEM LOG</h3>
+        <div id="log"></div>
+      </section>
+    </aside>
+
+    <aside class="right">
+      <section class="panel" id="inspector">
+        <h3><span>04</span>INSPECTOR</h3>
+        <div class="insp-idle">
+          <div class="scan-box"><i></i></div>
+          <p>NO TARGET LOCKED<br /><small>hover a component to scan · click to isolate</small></p>
+        </div>
+        <div class="insp-body">
+          <div class="insp-id" id="inspId">—</div>
+          <div class="insp-name" id="inspName">—</div>
+          <p class="insp-desc" id="inspDesc"></p>
+          <div class="bars" id="inspBars"></div>
+          <div class="insp-lock" id="inspLock">SCANNING</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h3><span>05</span>VIEWPORT</h3>
+        <dl class="readout">
+          <div><dt>AZIMUTH</dt><dd id="rAz">000.0°</dd></div>
+          <div><dt>ELEVATION</dt><dd id="rEl">+00.0°</dd></div>
+          <div><dt>RANGE</dt><dd id="rDist">00.0 m</dd></div>
+          <div><dt id="rSwarmLabel">SWARM</dt><dd id="rSwarm">0</dd></div>
+          <div><dt>FRAME</dt><dd id="rFps">00 FPS</dd></div>
+          <div><dt>UPTIME</dt><dd id="rUp">00:00</dd></div>
+        </dl>
+      </section>
+    </aside>
+
+    <footer class="dock">
+      <div class="group" id="views">
+        <label>VIEW</label>
+        <div class="btns">
+          <button data-v="core" class="active">CORE</button>
+          <button data-v="terra">TERRA</button>
+        </div>
+      </div>
+      <div class="group wide only-core">
+        <label>SEPARATION <output id="explodeVal">000%</output></label>
+        <input type="range" id="explode" min="0" max="100" value="0" aria-label="Exploded view separation" />
+      </div>
+      <div class="group only-terra" id="warp">
+        <label>TIME <output id="simClock">LIVE</output></label>
+        <div class="btns">
+          <button data-w="1" class="active">LIVE</button>
+          <button data-w="60">×60</button>
+          <button data-w="600">×600</button>
+          <button data-w="3600">×3600</button>
+        </div>
+      </div>
+      <div class="group only-terra" id="layers">
+        <label>DATA LAYERS</label>
+        <div class="btns">
+          <button data-l="sats" class="active">ORBITAL</button>
+          <button data-l="quakes" class="active">SEISMIC</button>
+          <button data-l="events" class="active">EVENTS</button>
+          <button data-l="aurora" class="active">AURORA</button>
+        </div>
+      </div>
+      <div class="group only-core" id="formations">
+        <label>SWARM FORMATION</label>
+        <div class="btns">
+          <button data-f="nebula" class="active"><kbd>1</kbd>NEBULA</button>
+          <button data-f="sphere"><kbd>2</kbd>SHELL</button>
+          <button data-f="helix"><kbd>3</kbd>HELIX</button>
+          <button data-f="knot"><kbd>4</kbd>KNOT</button>
+          <button data-f="lattice"><kbd>5</kbd>LATTICE</button>
+        </div>
+      </div>
+      <div class="group" id="modes">
+        <label>REALITY LAYER</label>
+        <div class="btns">
+          <button data-m="holo" class="active">HOLO</button>
+          <button data-m="construct">CONSTRUCT</button>
+          <button data-m="breach">BREACH</button>
+        </div>
+      </div>
+      <div class="group">
+        <label>COMMAND</label>
+        <div class="btns">
+          <button id="pulse">PULSE</button>
+          <button id="audio">AUDIO OFF</button>
+        </div>
+      </div>
+    </footer>
+
+    <div class="hints" id="hints"></div>
+    <div class="credits">DATA · USGS · CELESTRAK · NOAA SWPC · NASA EONET · NATURAL EARTH</div>
+
+    <div id="banner"></div>
+  </div>
+
+  <div id="reticle" aria-hidden="true">
+    <svg viewBox="0 0 80 80">
+      <circle class="r-ring" cx="40" cy="40" r="30" fill="none" stroke-width="1.2" stroke-dasharray="30 17.1" />
+      <path class="r-cross" d="M40 2v12M40 66v12M2 40h12M66 40h12" fill="none" stroke-width="1.2" />
+    </svg>
+    <span id="reticleTag"></span>
+  </div>
+  <div id="reticleDot" aria-hidden="true"></div>
+
+  <div id="boot">
+    <pre id="bootText"></pre>
+    <div class="boot-bar"><i id="bootBar"></i></div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
