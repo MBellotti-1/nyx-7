@@ -6,10 +6,12 @@ const pad = (n, l = 2) => String(n).padStart(l, '0');
 
 const el = {
   clock: $('clock'), date: $('date'), status: $('statusText'), mode: $('modeName'), ts: $('timeScale'),
-  log: $('log'), wave: $('wave'), inspector: $('inspector'),
+  log: $('log'), wave: $('wave'), inspector: $('inspector'), ticker: $('ticker'),
   inspId: $('inspId'), inspName: $('inspName'), inspDesc: $('inspDesc'), inspBars: $('inspBars'), inspLock: $('inspLock'),
-  az: $('rAz'), elv: $('rEl'), dist: $('rDist'), swarm: $('rSwarm'), swarmLabel: $('rSwarmLabel'), fps: $('rFps'), up: $('rUp'),
-  explode: $('explode'), explodeVal: $('explodeVal'), simClock: $('simClock'), hints: $('hints'),
+  az: $('rAz'), elv: $('rEl'), dist: $('rDist'), cursor: $('rCursor'), fps: $('rFps'), up: $('rUp'),
+  nSub: $('nSub'), nSun: $('nSun'), nMoon: $('nMoon'), nQ24: $('nQ24'), nEnergy: $('nEnergy'), nStar: $('nStar'),
+  split: $('split'), splitVal: $('splitVal'), simClock: $('simClock'), hints: $('hints'),
+  mag: $('mag'), magVal: $('magVal'), cityName: $('cityName'), cityList: $('cityList'),
   banner: $('banner'), reticle: $('reticle'), reticleDot: $('reticleDot'), reticleTag: $('reticleTag'),
   labels: $('labels'), leaders: $('leaders'),
   boot: $('boot'), bootText: $('bootText'), bootBar: $('bootBar'),
@@ -30,40 +32,30 @@ export function log(msg, cls = '') {
   while (el.log.children.length > 16) el.log.firstChild.remove();
 }
 
+// flavour only — the two fictional reality layers talk; HOLO stays strictly factual
 const CHATTER = {
-  holo: [
-    'field coil 02 — phase lock 99.97%', 'lattice node 41 resynchronised', 'swarm coherence nominal',
-    'zenith uplink handshake ok', 'injector 05 pulse width 82 fs', 'thermal bleed → ground anchor',
-    'operator gaze vector tracked', 'memory lattice defrag pass 7/9', 'psi-band carrier stable',
-    'harmonic 17 damped', 'telemetry ring sweep complete', 'neural bridge latency 0.4 ms',
-  ],
   construct: [
     'loading construct geometry…', 'residual self-image rendered', 'glyph stream decoded 1:1',
-    'there is no deck plate', 'white-room subroutine idle', 'carrier signal traced to source',
-    'operator jacked in', 'reality checksum mismatch — ignored', 'follow the white signal',
+    'there is no ground', 'carrier signal traced to source', 'operator jacked in',
+    'reality checksum mismatch — ignored', 'follow the white signal',
   ],
   breach: [
-    'CORE PRESSURE 140% OF RATED', 'lattice node 12 OFFLINE', 'injector 03 runaway',
-    'shell 06 delaminating', 'coolant loop B — NO FLOW', 'containment field collapsing',
-    'recommend manual separation', 'ground anchor saturated', 'evacuate deck 4',
+    'PLANETARY LINK UNSTABLE', 'telemetry checksum failed', 'uplink 03 dropped',
+    'projection lattice desynchronised', 'signal integrity 41%', 'rerouting through backup relay',
   ],
 };
 
 /* ---------- gauges ---------- */
 const gauges = {};
 document.querySelectorAll('.gauge').forEach((g) => {
-  gauges[g.dataset.g] = { ring: g.querySelector('.val'), num: g.querySelector('b'), label: g.querySelector('label'), v: 0 };
+  gauges[g.dataset.g] = { ring: g.querySelector('.val'), num: g.querySelector('b'), v: 0 };
 });
 function setGauge(name, v, text) {
   const g = gauges[name];
-  g.v += (v - g.v) * 0.12;
-  g.ring.style.strokeDashoffset = (201 * (1 - clamp(g.v))).toFixed(1);
-  g.num.textContent = text != null ? text : pad(Math.round(clamp(g.v) * 99));
+  g.v += (clamp(v) - g.v) * 0.12;
+  g.ring.style.strokeDashoffset = (201 * (1 - g.v)).toFixed(1);
+  g.num.textContent = text;
 }
-const GAUGE_LABELS = {
-  core: { output: 'OUTPUT', stability: 'STABILITY', entropy: 'ENTROPY' },
-  terra: { output: 'Kp INDEX', stability: 'SOLAR KM/S', entropy: 'MAX M · 24H' },
-};
 
 /* ---------- planetary feed rows ---------- */
 const feedRows = {};
@@ -80,9 +72,34 @@ export function setFeed(name, status, text) {
   r.li.title = FEED_TIPS[status] || '';
 }
 
+/* ---------- ticker: one scrolling line of whatever is true right now ---------- */
+let tickX = 0;
+let tickW = 0;
+let tickNext = null;
+function applyTicker() {
+  const frag = document.createDocumentFragment();
+  for (let pass = 0; pass < 2; pass++) { // doubled, so the loop point is seamless
+    for (const [label, value] of tickNext) {
+      const sep = document.createElement('i');
+      sep.textContent = '◆';
+      const b = document.createElement('b');
+      b.textContent = value;
+      frag.append(sep, `${label} `, b);
+    }
+  }
+  el.ticker.replaceChildren(frag);
+  tickW = el.ticker.scrollWidth / 2;
+  tickNext = null;
+}
+export function setTicker(items) {
+  tickNext = items;
+  if (!tickW) applyTicker();
+}
+
 /* ---------- waveform ---------- */
 const wctx = el.wave.getContext('2d');
 function drawWave(t, energy, color) {
+  if (!el.wave.offsetParent) return; // hidden on short screens
   const w = el.wave.width, h = el.wave.height;
   wctx.clearRect(0, 0, w, h);
   wctx.strokeStyle = color;
@@ -97,65 +114,51 @@ function drawWave(t, energy, color) {
   }
   wctx.stroke();
   wctx.shadowBlur = 0;
-  wctx.globalAlpha = 0.35;
-  wctx.lineWidth = 1;
-  wctx.beginPath();
-  wctx.moveTo(0, h / 2);
-  wctx.lineTo(w, h / 2);
-  wctx.stroke();
-  wctx.globalAlpha = 1;
 }
 
 /* ---------- inspector ---------- */
 let shown = null;
 let shownStats = null;
-let bars = [];
 function buildBars(stats) {
   shownStats = stats;
-  el.inspBars.replaceChildren();
-  bars = stats.map(([label, v, text]) => {
+  el.inspBars.replaceChildren(...stats.map(([label, v, text]) => {
     const row = document.createElement('div');
-    row.className = 'bar';
+    row.className = 'bar real';
     const l = document.createElement('label');
     l.textContent = label;
     const track = document.createElement('div');
     const fill = document.createElement('i');
+    fill.style.width = `${(clamp(v) * 100).toFixed(0)}%`;
     track.appendChild(fill);
     const num = document.createElement('span');
+    num.textContent = text;
     row.append(l, track, num);
-    if (text != null) {
-      row.classList.add('real');
-      fill.style.width = `${(clamp(v) * 100).toFixed(0)}%`;
-      num.textContent = text;
-    }
-    el.inspBars.appendChild(row);
-    return { fill, num, v, real: text != null };
-  });
+    return row;
+  }));
 }
 export function inspect(part, locked) {
-  el.inspLock.textContent = locked ? 'TARGET ISOLATED' : 'SCANNING';
+  el.inspLock.textContent = locked ? 'TARGET LOCKED' : 'SCANNING';
   el.inspLock.classList.toggle('locked', !!locked);
   if (part === shown) {
-    if (part && part.info.stats !== shownStats) buildBars(part.info.stats); // live telemetry refreshed
+    if (part && part.info.stats !== shownStats) buildBars(part.info.stats); // live values refreshed
     return;
   }
   shown = part;
   el.inspector.classList.toggle('has', !!part);
   if (!part) return;
-  const { id, name, desc, stats } = part.info;
-  el.inspId.textContent = id;
-  el.inspName.textContent = name;
-  el.inspDesc.textContent = desc;
-  buildBars(stats);
+  el.inspId.textContent = part.info.id;
+  el.inspName.textContent = part.info.name;
+  el.inspDesc.textContent = part.info.desc;
+  buildBars(part.info.stats);
 }
 
-/* ---------- callouts (exploded-view parts, and things on / around the planet) ---------- */
+/* ---------- callouts: labelled leader lines to things in the 3D scene ---------- */
 const SVG = 'http://www.w3.org/2000/svg';
 const callouts = [];
-export function addCallouts(labels, group) {
-  labels.forEach((L, i) => {
+export function addCallouts(labels) {
+  labels.forEach((L) => {
     const node = document.createElement('div');
-    node.className = 'callout';
+    node.className = L.mini ? 'callout mini' : 'callout';
     const inner = document.createElement('div');
     const b = document.createElement('b');
     b.textContent = L.title;
@@ -166,9 +169,9 @@ export function addCallouts(labels, group) {
     el.labels.appendChild(node);
     const line = document.createElementNS(SVG, 'polyline');
     const dot = document.createElementNS(SVG, 'circle');
-    dot.setAttribute('r', 4);
+    dot.setAttribute('r', L.mini ? 2.5 : 4);
     el.leaders.append(line, dot);
-    callouts.push({ L, group, node, b, s, line, dot, i, x: 0, y: 0, lx: 0, ly: 0, side: 1, vis: 0, w: 0, shownVis: '' });
+    callouts.push({ L, node, b, s, line, dot, x: 0, y: 0, lx: 0, ly: 0, side: 1, vis: 0, w: 0, shownVis: '', hgt: L.mini ? 22 : 42 });
   });
 }
 
@@ -189,30 +192,31 @@ function updateCallouts(camera, groupVis, w, h) {
   const zone = freeZone(w);
   const sides = { '-1': [], 1: [] };
   for (const c of callouts) {
-    const gv = groupVis[c.group] || 0;
-    // parts stagger in as the assembly separates; planet labels follow their own line of sight
-    const want = c.L.front != null ? gv * c.L.front : clamp(gv * 1.6 - c.i * 0.06);
+    const want = (groupVis[c.L.group] || 0) * c.L.front;
     if (want <= 0.01) { c.vis = 0; continue; }
     if (c.L.dirty) { c.b.textContent = c.L.title; c.s.textContent = c.L.sub; c.L.dirty = false; c.w = 0; }
     c.L.anchor.getWorldPosition(v).project(camera);
     c.x = (v.x * 0.5 + 0.5) * w;
     c.y = (-v.y * 0.5 + 0.5) * h;
-    const on = v.z < 1 && c.x > zone.l && c.x < zone.r && c.y > 70 && c.y < h - 110;
+    const on = v.z < 1 && c.x > zone.l && c.x < zone.r && c.y > 104 && c.y < h - 112;
     c.vis = on ? clamp(want) : 0;
-    // hysteresis so labels don't flip sides while the model turns
+    if (!c.vis) continue;
+    const reach = c.L.mini ? 44 : 84;
+    // hysteresis so labels don't flip sides while the scene turns
     if (c.x > w / 2 + 30) c.side = 1; else if (c.x < w / 2 - 30) c.side = -1;
-    c.lx = c.x + c.side * 84;
+    c.lx = c.x + c.side * reach;
     if (!c.w) c.w = c.node.firstChild.offsetWidth;
     if (c.side > 0 && c.lx + c.w > zone.r) c.side = -1;
     else if (c.side < 0 && c.lx - c.w < zone.l) c.side = 1;
-    c.lx = c.x + c.side * 84;
-    c.ly = c.y - 44;
-    if (c.vis > 0) sides[c.side].push(c);
+    c.lx = c.x + c.side * reach;
+    c.ly = c.y - (c.L.mini ? 24 : 44);
+    sides[c.side].push(c);
   }
   for (const key of [-1, 1]) {
     const list = sides[key].sort((a, b) => a.ly - b.ly);
     for (let i = 1; i < list.length; i++) {
-      if (list[i].ly - list[i - 1].ly < 42) list[i].ly = list[i - 1].ly + 42;
+      const gap = (list[i].hgt + list[i - 1].hgt) / 2;
+      if (list[i].ly - list[i - 1].ly < gap) list[i].ly = list[i - 1].ly + gap;
     }
   }
   for (const c of callouts) {
@@ -225,8 +229,8 @@ function updateCallouts(camera, groupVis, w, h) {
     }
     if (c.vis <= 0) continue;
     c.node.classList.toggle('flip', c.side < 0);
-    c.node.style.transform = `translate(${c.lx.toFixed(1)}px, ${(c.ly - 17).toFixed(1)}px)`;
-    c.line.setAttribute('points', `${c.x.toFixed(1)},${c.y.toFixed(1)} ${(c.x + c.side * 34).toFixed(1)},${c.ly.toFixed(1)} ${c.lx.toFixed(1)},${c.ly.toFixed(1)}`);
+    c.node.style.transform = `translate(${c.lx.toFixed(1)}px, ${(c.ly - (c.L.mini ? 9 : 17)).toFixed(1)}px)`;
+    c.line.setAttribute('points', `${c.x.toFixed(1)},${c.y.toFixed(1)} ${(c.x + c.side * (c.L.mini ? 18 : 34)).toFixed(1)},${c.ly.toFixed(1)} ${c.lx.toFixed(1)},${c.ly.toFixed(1)}`);
     c.dot.setAttribute('cx', c.x.toFixed(1));
     c.dot.setAttribute('cy', c.y.toFixed(1));
   }
@@ -265,6 +269,7 @@ const BOOT = [
   'USGS SEISMIC NETWORK ............... LISTENING',
   'ORBITAL CATALOG  [CELESTRAK] ....... TRACKING',
   'NOAA SPACE WEATHER ................. SYNCHRONISED',
+  'CITY MODELS  [OPENSTREETMAP] ....... STANDING BY',
   '',
   '> WAKE UP, OPERATOR. THE PLANET IS TALKING.',
 ];
@@ -295,15 +300,13 @@ export function setMode(mode, palette) {
 }
 
 const HINTS = {
-  core: [['DRAG', 'orbit'], ['SCROLL', 'separate'], ['HOLD SPACE', 'dilate time'], ['CLICK', 'isolate / pulse'], ['T', 'planet'], ['M', 'layer'], ['H', 'hide HUD']],
-  terra: [['DRAG', 'orbit'], ['SCROLL', 'zoom'], ['HOLD SPACE', 'fast-forward time'], ['HOVER', 'scan quakes + stations'], ['T', 'core'], ['M', 'layer'], ['H', 'hide HUD']],
+  orbit: [['DRAG', 'orbit'], ['SCROLL', 'zoom'], ['X', 'split the planet'], ['HOLD SPACE', 'fast-forward time'], ['CLICK A CITY', 'descend'], ['M', 'layer'], ['H', 'hide HUD']],
+  city: [['DRAG', 'orbit'], ['SCROLL', 'zoom'], ['Q', 'trigger stress test'], ['R', 'reset'], ['← →', 'next city'], ['ESC', 'back to orbit']],
 };
 let hintTimer = 0;
 export function setView(view) {
-  document.body.classList.toggle('view-terra', view === 'terra');
-  document.body.classList.toggle('view-core', view !== 'terra');
-  for (const [k, text] of Object.entries(GAUGE_LABELS[view])) gauges[k].label.textContent = text;
-  el.swarmLabel.textContent = view === 'terra' ? 'CURSOR' : 'SWARM';
+  document.body.classList.toggle('view-city', view === 'city');
+  document.body.classList.toggle('view-orbit', view !== 'city');
   el.hints.replaceChildren(...HINTS[view].map(([k, t]) => {
     const s = document.createElement('span');
     const b = document.createElement('b');
@@ -313,20 +316,55 @@ export function setView(view) {
   }));
   document.body.classList.remove('hints-off');
   clearTimeout(hintTimer);
-  hintTimer = setTimeout(() => document.body.classList.add('hints-off'), 18000);
+  hintTimer = setTimeout(() => document.body.classList.add('hints-off'), 20000);
 }
 
-export function setExplodeUI(e) {
-  const pct = Math.round(e * 100);
-  if (document.activeElement !== el.explode || Math.abs(el.explode.value - pct) > 1) el.explode.value = pct;
-  el.explodeVal.textContent = `${pad(pct, 3)}%`;
+export function setSplitUI(x) {
+  const pct = Math.round(x * 100);
+  if (document.activeElement !== el.split || Math.abs(el.split.value - pct) > 1) el.split.value = pct;
+  el.splitVal.textContent = `${pad(pct, 3)}%`;
+}
+
+/* ---------- city list ---------- */
+const cityRows = new Map();
+export function buildCityList(cities, onPick) {
+  el.cityList.replaceChildren(...cities.map((c) => {
+    const li = document.createElement('li');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    const dot = document.createElement('i');
+    const name = document.createElement('b');
+    name.textContent = c.name;
+    const time = document.createElement('span');
+    const near = document.createElement('em');
+    btn.append(dot, name, time, near);
+    btn.addEventListener('click', () => onPick(c.id));
+    li.appendChild(btn);
+    cityRows.set(c.id, { li, dot, time, near, btn });
+    return li;
+  }));
+}
+/** rows: [{ id, time, night, near }], active: city id currently open (or null) */
+export function updateCities(rows, active) {
+  for (const r of rows) {
+    const row = cityRows.get(r.id);
+    if (!row) continue;
+    row.time.textContent = r.time;
+    row.near.textContent = r.near;
+    row.dot.className = r.night ? 'night' : '';
+    row.btn.title = r.tip;
+    row.li.classList.toggle('active', r.id === active);
+  }
+}
+export function setCityUI(name, mag) {
+  el.cityName.textContent = name;
+  el.magVal.textContent = `M ${mag.toFixed(1)}`;
 }
 
 /* ---------- per-frame ---------- */
 let logTimer = 1.5;
 let slow = 0;
 const t0 = performance.now();
-const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 
 export function update(rawDt, s) {
   // reticle ring trails the pointer
@@ -337,68 +375,53 @@ export function update(rawDt, s) {
   updateCallouts(s.camera, s.calloutVis, innerWidth, innerHeight);
   drawWave(s.time, s.energy, s.colorCss);
 
+  if (tickW) {
+    tickX += rawDt * 42;
+    if (tickX >= tickW) { tickX -= tickW; if (tickNext) applyTicker(); }
+    el.ticker.style.transform = `translateX(${(-tickX).toFixed(1)}px)`;
+  }
+
   // everything below is text — 12 Hz is plenty
   slow += rawDt;
   if (slow < 0.08) return;
   slow = 0;
 
-  const terra = s.view === 'terra';
-  if (terra) {
-    // the planet runs on simulated UTC so the time-warp is legible
-    const d = new Date(s.simMs);
-    el.clock.firstChild.nodeValue = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
-    el.clock.lastChild.textContent = ' UTC';
-    const off = s.simOffset;
-    const a = Math.abs(off);
-    const offTxt = a < 2 ? 'LIVE'
-      : `T${off > 0 ? '+' : '−'}${a >= 86400 ? `${(a / 86400).toFixed(1)}D` : `${pad(Math.floor(a / 3600))}:${pad(Math.floor((a % 3600) / 60))}:${pad(Math.floor(a % 60))}`}`;
-    el.date.textContent = `${d.getUTCFullYear()}.${pad(d.getUTCMonth() + 1)}.${pad(d.getUTCDate())} · ${offTxt}`;
-    el.simClock.textContent = offTxt;
-    el.ts.textContent = s.rate >= 10 ? s.rate.toFixed(0) : s.rate.toFixed(2);
-  } else {
-    const d = new Date();
-    el.clock.firstChild.nodeValue = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-    el.clock.lastChild.textContent = `.${pad(d.getMilliseconds(), 3)}`;
-    el.date.textContent = `${DAYS[d.getDay()]} ${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())} · SOL-3`;
-    el.ts.textContent = s.timeScale.toFixed(2);
-  }
+  // the planet runs on simulated UTC so the time-warp is legible
+  const d = new Date(s.simMs);
+  el.clock.firstChild.nodeValue = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+  const off = s.simOffset;
+  const a = Math.abs(off);
+  const offTxt = a < 2 ? 'LIVE'
+    : `T${off > 0 ? '+' : '−'}${a >= 86400 ? `${(a / 86400).toFixed(1)}D` : `${pad(Math.floor(a / 3600))}:${pad(Math.floor((a % 3600) / 60))}:${pad(Math.floor(a % 60))}`}`;
+  el.date.textContent = `${d.getUTCFullYear()}.${pad(d.getUTCMonth() + 1)}.${pad(d.getUTCDate())} · ${offTxt}`;
+  el.simClock.textContent = offTxt;
+  el.ts.textContent = s.rate >= 10 ? s.rate.toFixed(0) : s.rate.toFixed(2);
   el.status.textContent = s.status;
 
-  const breach = s.mode === 'breach';
-  if (terra && s.real) {
-    const r = s.real;
-    setGauge('output', r.kp != null ? r.kp / 9 : 0, r.kp != null ? r.kp.toFixed(1) : '—');
-    setGauge('stability', r.wind != null ? (r.wind - 250) / 600 : 0, r.wind != null ? Math.round(r.wind) : '—');
-    setGauge('entropy', r.maxMag != null ? r.maxMag / 9 : 0, r.maxMag != null ? r.maxMag.toFixed(1) : '—');
-  } else {
-    const n = (k) => Math.sin(s.time * k) * 0.5 + 0.5;
-    setGauge('output', 0.62 + 0.2 * n(0.9) + s.energy * 0.3 + (breach ? 0.25 : 0));
-    setGauge('stability', (breach ? 0.22 : 0.93) - s.explode * 0.3 + 0.05 * n(1.7) - s.energy * 0.2);
-    setGauge('entropy', 0.12 + s.explode * 0.35 + (breach ? 0.5 : 0) + 0.08 * n(2.3) + (1 - s.timeScale) * 0.3);
-  }
+  const r = s.real;
+  setGauge('kp', r.kp != null ? r.kp / 9 : 0, r.kp != null ? r.kp.toFixed(1) : '—');
+  setGauge('wind', r.wind != null ? (r.wind - 250) / 600 : 0, r.wind != null ? Math.round(r.wind) : '—');
+  setGauge('mag', r.maxMag != null ? r.maxMag / 9 : 0, r.maxMag != null ? r.maxMag.toFixed(1) : '—');
 
-  for (const b of bars) {
-    if (b.real) continue; // measured values don't get cosmetic jitter
-    const val = clamp(b.v + (Math.random() - 0.5) * 0.03);
-    b.fill.style.width = `${(val * 100).toFixed(0)}%`;
-    b.num.textContent = (val * 100).toFixed(1);
-  }
+  const e = s.earth;
+  el.nSub.textContent = e.sub; el.nSun.textContent = e.sun; el.nMoon.textContent = e.moon;
+  el.nQ24.textContent = e.q24; el.nEnergy.textContent = e.energy; el.nStar.textContent = e.star;
 
   const sph = s.spherical;
   el.az.textContent = `${pad((((sph.theta * 180) / Math.PI + 360) % 360).toFixed(1), 5)}°`;
   const elev = 90 - (sph.phi * 180) / Math.PI;
   el.elv.textContent = `${elev >= 0 ? '+' : '−'}${pad(Math.abs(elev).toFixed(1), 4)}°`;
-  el.dist.textContent = terra ? `${Math.round(s.rangeKm).toLocaleString('en-US')} km` : `${sph.radius.toFixed(1)} m`;
-  el.swarm.textContent = terra ? s.cursor : s.formation.toUpperCase();
+  el.dist.textContent = s.range;
+  el.cursor.textContent = s.cursor;
   el.fps.textContent = `${pad(Math.round(s.fps))} FPS`;
   const up = Math.floor((performance.now() - t0) / 1000);
   el.up.textContent = `${pad(Math.floor(up / 60))}:${pad(up % 60)}`;
 
   logTimer -= 0.08;
-  if (logTimer <= 0 && s.online && (!terra || breach)) {
+  if (logTimer <= 0 && s.online && CHATTER[s.mode]) {
     const lines = CHATTER[s.mode];
-    log(lines[(Math.random() * lines.length) | 0], breach ? 'warn' : '');
-    logTimer = breach ? 0.35 + Math.random() * 0.5 : 0.9 + Math.random() * 2.2;
+    log(lines[(Math.random() * lines.length) | 0], s.mode === 'breach' ? 'warn' : '');
+    logTimer = s.mode === 'breach' ? 0.8 + Math.random() : 2 + Math.random() * 3;
   }
 }
 

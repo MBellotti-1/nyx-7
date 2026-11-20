@@ -7,11 +7,12 @@ import '@fontsource/share-tech-mono/400.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { U, PALETTES, clamp, lerp, ease, smooth } from './shared.js';
-import { createCore } from './core.js';
-import { createParticles, FORMATIONS } from './particles.js';
+import { createParticles } from './particles.js';
 import { createRain, createDeck, createPanels } from './environment.js';
-import { createTerra, gmst, fmtLL, llToVec, RE } from './terra.js';
-import { feeds, onFeed, startFeeds, kpNow, kpWord, quakeStats, ago } from './data.js';
+import { createTerra, gmst, fmtLL, llToVec, sunAltAz, earthNow, greatCircleKm, energyText, RE, RE_KM } from './terra.js';
+import { createCity, CITY_SPAN } from './city.js';
+import { CITIES, CITY_SIZE } from './cities.js';
+import { feeds, onFeed, startFeeds, loadCity, kpNow, kpWord, quakeStats, ago } from './data.js';
 import { createPost } from './post.js';
 import { audio } from './audio.js';
 import * as hud from './hud.js';
@@ -37,39 +38,38 @@ controls.dampingFactor = 0.06;
 controls.enablePan = false;
 controls.enableZoom = false;
 controls.rotateSpeed = 0.6;
-controls.minPolarAngle = Math.PI * 0.18;
-controls.maxPolarAngle = Math.PI * 0.72;
+controls.minPolarAngle = Math.PI * 0.06;
+controls.maxPolarAngle = Math.PI * 0.94;
 controls.autoRotate = true;
-controls.autoRotateSpeed = 0.45;
+controls.autoRotateSpeed = 0.28;
 
 const PARTICLES = innerWidth * innerHeight < 700000 ? 50000 : 80000;
-const core = createCore();
 const swarm = createParticles(PARTICLES);
 const rain = createRain();
 const deck = createDeck();
 const panels = createPanels();
 const terra = createTerra();
+const city = createCity(terra.uScale);
 swarm.uniforms.uSun.value = terra.sun;
-scene.add(rain.mesh, deck, terra.group, swarm.points, panels.group, core.root);
+scene.add(rain.mesh, deck, terra.group, city.group, swarm.points, panels.group);
 
 const post = createPost(renderer, scene, camera, pixelRatio);
-hud.addCallouts(core.labels, 'core');
-hud.addCallouts(terra.labels, 'terra');
-hud.setView('core');
+hud.addCallouts(terra.labels);
+hud.addCallouts(city.labels);
+hud.setView('orbit');
 
 /* ---------- state ---------- */
 
 const S = {
-  online: false, onlineAt: 0, introPulse: false, autoTerra: false, touched: false,
+  online: false, onlineAt: 0, introPulse: false, intro: 0,
   mode: 'holo',
-  view: 'core', terra: 0, terraSeen: false, camGoal: null,
+  view: 'orbit', orbitK: 1, cityK: 0, cityId: null, descend: null, mag: 7,
+  split: 0, splitTarget: 0,
   simOffset: 0, warp: 1, // seconds ahead of the real clock; time multiplier
-  explode: 1, explodeTarget: 1,
-  timeScale: 1, dilate: false, dilation: 0,
-  zoom: 0,
-  glitch: 0, waveR: 2, waveAmp: 0,
-  energy: 0,
-  hovered: null,
+  dilate: false, dilation: 0,
+  zoom: 0, camGoal: null,
+  glitch: 0, waveR: 2, waveAmp: 0, energy: 0,
+  hovered: null, selected: null,
   fps: 60,
 };
 const target = {
@@ -77,13 +77,16 @@ const target = {
   rainI: PALETTES.holo.rainI, damp: PALETTES.holo.damp,
 };
 
-const pickables = [...core.pickables, ...panels.pickables];
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2(0, 0);
-const pointerPx = { x: innerWidth / 2, y: innerHeight / 2, down: false, moved: 0, lastMove: -10, inside: false };
+const pointerPx = { down: false, moved: 0, lastMove: -10, inside: false };
 const sph = new THREE.Spherical();
 const origin = new THREE.Vector3();
+const UP = new THREE.Vector3(0, 1, 0);
 const simNow = () => Date.now() + S.simOffset * 1000;
+const num = (n) => n.toLocaleString('en-US');
+const cityById = (id) => terra.cities.find((c) => c.id === id);
+let landYaw = 0;
 
 /* ---------- actions ---------- */
 
@@ -93,7 +96,6 @@ function pulse(strength = 1) {
   S.waveR = 0;
   S.waveAmp = strength;
   S.energy = Math.min(1.5, S.energy + strength);
-  core.flash(strength);
   audio.pulse();
 }
 
@@ -107,81 +109,127 @@ function setMode(mode) {
   hud.setMode(mode, p);
   document.querySelectorAll('#modes button').forEach((b) => b.classList.toggle('active', b.dataset.m === mode));
   audio.shift();
-  const planet = S.view === 'terra'; // the swarm is busy being continents
-  if (mode === 'construct') {
-    hud.banner('CONSTRUCT', 'the world behind the world');
-    hud.log('reality layer → CONSTRUCT', 'hi');
-    if (!planet) setFormation('lattice');
-  } else if (mode === 'breach') {
-    hud.banner('CONTAINMENT BREACH', planet ? 'planetary link unstable' : 'manual separation advised');
-    hud.log('!! CONTAINMENT BREACH !!', 'hi');
-    if (!planet) S.explodeTarget = Math.max(S.explodeTarget, 0.55);
-    pulse(1);
-  } else {
-    hud.banner('HOLO', 'projection layer restored');
-    hud.log('reality layer → HOLO', 'hi');
-    if (!planet) setFormation('nebula');
-  }
-}
-
-function setFormation(name) {
-  if (!swarm.setFormation(name)) return;
-  swarm.follow = null;
-  document.querySelectorAll('#formations button').forEach((b) => b.classList.toggle('active', b.dataset.f === name));
-  hud.log(`swarm re-forming → ${name.toUpperCase()}`, 'hi');
-  S.energy = Math.min(1.5, S.energy + 0.4);
-  audio.select();
+  if (mode === 'construct') hud.banner('CONSTRUCT', 'the world behind the world');
+  else if (mode === 'breach') { hud.banner('SIGNAL BREACH', 'planetary link unstable'); pulse(1); }
+  else hud.banner('HOLO', 'projection layer restored');
+  hud.log(`reality layer → ${p.label}`, 'hi');
 }
 
 function select(part) {
-  core.select(part);
-  if (part) {
-    hud.log(`target isolated: ${part.info.tag || part.info.id} ${part.info.name}`, 'hi');
-    if (!part.isPanel && !part.static) S.explodeTarget = Math.max(S.explodeTarget, 0.6);
-    audio.select();
-  }
+  S.selected = part;
+  if (part) { hud.log(`target locked: ${part.info.tag || part.info.id}`, 'hi'); audio.select(); }
 }
 
-// CORE: the reactor. TERRA: the reactor folds away and the swarm becomes the planet.
-function setView(view, auto = false) {
-  if (view === S.view) return;
-  if (!auto) S.touched = true;
-  S.view = view;
+// the swarm puts the continents back on, wherever the planet has turned to
+function landSwarm() {
+  landYaw = gmst(simNow()) - swarm.points.rotation.y;
+  swarm.morphTo('terra', terra.landPoints(swarm.count, landYaw));
+  swarm.follow = () => terra.spin.rotation.y - landYaw;
+}
+
+function lookAtSurface(dir, phi) {
+  // aim for where that spot will be once the clock has settled back to live
+  const d = dir.clone().applyAxisAngle(UP, gmst(S.warp === 1 ? Date.now() : simNow()));
+  S.camGoal = { theta: Math.atan2(d.x, d.z), phi: phi != null ? phi : Math.acos(clamp(d.y, -1, 1)), t: 0 };
+}
+
+function setSplit(x) {
+  x = clamp(x);
+  if (S.view !== 'orbit' || S.descend) return;
+  if (x > 0.05 && S.splitTarget <= 0.05) {
+    // first crack: turn to face the opening, flash the core
+    lookAtSurface(new THREE.Vector3().crossVectors(terra.uCutN.value, UP), 1.2);
+    terra.flashCore();
+    pulse(1);
+    S.glitch = 0.8;
+    hud.banner('FRACTURE', terra.section.through ? `section through ${terra.section.through}` : 'opening the planet');
+    hud.log(`fracture plane set${terra.section.through ? ` through ${terra.section.through}` : ''}`, 'hi');
+    hud.log(`${terra.section.count} hypocentres on the section, deepest ${terra.section.deepest.toFixed(0)} km`);
+    select(null);
+  } else if (x <= 0.05 && S.splitTarget > 0.05) {
+    hud.log('planet resealed', 'hi');
+  }
+  S.splitTarget = x;
+}
+
+function enterCity(id) {
+  const c = cityById(id);
+  if (!c || (S.descend && S.descend.id === id) || (S.view === 'city' && S.cityId === id && !S.descend)) return;
+  S.splitTarget = 0;
+  select(null);
+  const d = { id, t: 0, data: null, failed: false, fromOrbit: S.view === 'orbit' };
+  S.descend = d;
+  loadCity(id).then((data) => { d.data = data; }, () => { d.failed = true; });
+  if (d.fromOrbit) { lookAtSurface(c.dir); S.zoom = -7.5; }
+  hud.banner(c.name, `${c.district} · descending`);
+  hud.log(`city uplink → ${c.name}`, 'hi');
+  audio.shift();
+}
+
+function arriveCity(d) {
+  const c = cityById(d.id);
+  city.build(c, d.data);
+  S.view = 'city';
+  S.cityId = d.id;
+  S.descend = null;
+  S.zoom = 0;
+  S.glitch = 1;
+  hud.setView('city');
+  hud.setCityUI(c.name, S.mag);
+  const yaw = swarm.points.rotation.y;
+  swarm.follow = () => yaw;
+  swarm.morphTo('city', city.groundPoints(swarm.count));
+  controls.minPolarAngle = Math.PI * 0.1;
+  controls.maxPolarAngle = Math.PI * 0.47;
+  S.camGoal = { theta: sph.setFromVector3(camera.position).theta + 0.6, phi: 1.08, t: 0 };
+  const st = city.state;
+  hud.banner(c.name, `${num(st.count)} structures · ${Math.round((st.measured / st.count) * 100)}% surveyed heights`);
+  hud.log(`${c.name}: ${num(st.count)} structures from OpenStreetMap (${st.fetched})`, 'hi');
+  if (st.tallestName) hud.log(`tallest: ${st.tallestName}, ${st.tallest.toFixed(0)} m`);
+  cityPart = null;
+  pulse(0.8);
+}
+
+function exitCity() {
+  if (S.view !== 'city') { S.descend = null; return; }
+  S.view = 'orbit';
+  S.descend = null;
+  const c = cityById(S.cityId);
+  S.cityId = null;
   S.zoom = 0;
   S.glitch = 1;
   select(null);
-  hud.setView(view);
-  document.querySelectorAll('#views button').forEach((b) => b.classList.toggle('active', b.dataset.v === view));
-  audio.shift();
-  if (view === 'terra') {
-    S.explodeTarget = 0;
-    if (!S.terraSeen) { S.terraSeen = true; S.simOffset = -3 * 3600; } // arrive from three hours ago, catch up to now
-    const yaw = gmst(simNow()) - swarm.points.rotation.y;
-    swarm.setFormationData('terra', terra.landPoints(swarm.count, yaw));
-    swarm.follow = () => terra.spin.rotation.y - yaw;
-    controls.minPolarAngle = Math.PI * 0.06;
-    controls.maxPolarAngle = Math.PI * 0.94;
-    // swing round to the visitor's own side of the planet (longitude from their clock, no permission needed)
-    const lon = clamp(-new Date().getTimezoneOffset() / 4, -180, 180);
-    const d = llToVec(24, lon, 1).applyAxisAngle(THREE.Object3D.DEFAULT_UP, gmst(Date.now()));
-    S.camGoal = { theta: Math.atan2(d.x, d.z), phi: Math.acos(clamp(d.y, -1, 1)), t: 0 };
-    const st = quakeStats();
-    hud.banner('PLANETARY LINK', `${terra.census.total ? `${terra.census.total.toLocaleString('en-US')} objects in orbit` : 'acquiring orbital catalog'}${st ? ` · ${st.n} earthquakes this week` : ''}`);
-    hud.log('planetary link established', 'hi');
-    hud.log('synchronising orbital catalog to present…');
-  } else {
-    setFormation('nebula');
-    controls.minPolarAngle = Math.PI * 0.18;
-    controls.maxPolarAngle = Math.PI * 0.72;
-    hud.banner('COGNITIVE CORE', 'planetary link on standby');
-    hud.log('returning to core', 'hi');
-  }
-  pulse(0.8);
+  city.reset();
+  hud.setView('orbit');
+  landSwarm();
+  controls.minPolarAngle = Math.PI * 0.06;
+  controls.maxPolarAngle = Math.PI * 0.94;
+  if (c) lookAtSurface(c.dir);
+  hud.banner('ORBIT', 'planetary link');
+  hud.log('returning to orbit', 'hi');
+  pulse(0.7);
+}
+
+function stepCity(step) {
+  const i = CITIES.findIndex((c) => c.id === (S.descend ? S.descend.id : S.cityId));
+  enterCity(CITIES[(i + step + CITIES.length) % CITIES.length].id);
+}
+
+function triggerQuake() {
+  if (S.view !== 'city' || S.descend || !city.ready) return;
+  city.trigger(S.mag);
+  const sim = city.state.sim;
+  hud.banner(`M ${S.mag.toFixed(1)} · SIMULATED`, 'illustrative stress test — not a prediction');
+  hud.log(`stress test M${S.mag.toFixed(1)} beneath ${city.state.meta.name}`, 'hi');
+  hud.log(`simulated: ${num(sim.collapsed)} collapsed · ${num(sim.damaged)} damaged of ${num(city.state.count)}`, 'warn');
+  S.energy = 1.5;
+  audio.pulse();
+  audio.quake(S.mag);
+  cityPart = null;
 }
 
 function setWarp(rate) {
   S.warp = rate;
-  S.touched = true;
   document.querySelectorAll('#warp button').forEach((b) => b.classList.toggle('active', +b.dataset.w === rate));
   hud.log(rate === 1 ? 'time lock → LIVE' : `time warp ×${rate}`, 'hi');
   audio.select();
@@ -189,13 +237,49 @@ function setWarp(rate) {
 
 /* ---------- live data ---------- */
 
-const num = (n) => n.toLocaleString('en-US');
 const staleNote = (f) => (f.status === 'snapshot' ? ` · SNAPSHOT ${ago(f.at).replace(' AGO', '')} OLD` : f.status === 'cached' ? ' · CACHED' : '');
+const kmText = (km) => (km < 1000 ? `${Math.round(km)} KM` : `${(km / 1000).toFixed(1)}K KM`);
+
+function nearestQuakes() {
+  const list = feeds.quakes.data || [];
+  for (const c of terra.cities) {
+    let best = null, bestKm = Infinity;
+    for (const q of list) {
+      const km = greatCircleKm(c.lat, c.lon, q.lat, q.lon);
+      if (km < bestKm) { bestKm = km; best = q; }
+    }
+    c.near = best ? { q: best, km: bestKm } : null;
+  }
+}
+
+function buildTicker() {
+  const items = [];
+  const st = quakeStats();
+  const list = feeds.quakes.data;
+  if (st && list) {
+    const top = [...list].sort((a, b) => b.mag - a.mag).slice(0, 5);
+    top.forEach((q, i) => items.push([i ? `M${q.mag.toFixed(1)}` : `STRONGEST THIS WEEK · M${q.mag.toFixed(1)}`, `${q.place.toUpperCase()} · ${ago(q.time)}`]));
+    items.push(['SEISMIC ENERGY · 7 DAYS', energyText(st.joules)], ['EARTHQUAKES · 24H', `${st.n24}`]);
+  }
+  const c = terra.census;
+  if (c.total) items.push(['ACTIVE SATELLITES', num(c.total)], ['STARLINK', num(c.starlink)], ['GEOSTATIONARY', num(c.geo)]);
+  const iss = terra.stations[0];
+  if (iss.el) items.push(['ISS', `${iss.alt.toFixed(0)} KM OVER ${fmtLL(iss.ll.lat, iss.ll.lon)}`]);
+  if (feeds.wind.data && Number.isFinite(feeds.wind.data.speed)) items.push(['SOLAR WIND', `${Math.round(feeds.wind.data.speed)} KM/S`]);
+  const k = kpNow();
+  if (k != null) items.push(['GEOMAGNETIC Kp', `${k.toFixed(1)} · ${kpWord(k)}`]);
+  if (feeds.events.data) items.push(['WILDFIRES BURNING', `${feeds.events.data.filter((e) => e.cat === 'wildfires').length}`]);
+  const e = earthNow(simNow());
+  items.push(['MOON', `${e.moon} · ${(e.moonLit * 100).toFixed(0)}% LIT`], ['SUN OVERHEAD AT', fmtLL(e.subLat, e.subLon)]);
+  if (terra.section.through) items.push(['FRACTURE PLANE THROUGH', terra.section.through]);
+  if (items.length) hud.setTicker(items);
+}
 
 onFeed((name, f, extra) => {
   if (!f.data) { hud.setFeed(name, 'offline', 'NO SIGNAL'); return; }
   if (name === 'quakes') {
     terra.setQuakes(f.data);
+    nearestQuakes();
     const st = quakeStats();
     hud.setFeed('quakes', f.status, st ? `${st.n} IN 7 DAYS · MAX M${st.max.mag.toFixed(1)}${staleNote(f)}` : 'NO EVENTS');
     // something just happened on the real planet
@@ -220,12 +304,15 @@ onFeed((name, f, extra) => {
     const fires = f.data.filter((e) => e.cat === 'wildfires').length;
     hud.setFeed('events', f.status, `${f.data.length} ACTIVE · ${fires} WILDFIRES${staleNote(f)}`);
   }
+  buildTicker();
 });
 startFeeds();
+setInterval(buildTicker, 45e3);
 
 const hooks = {
   // fired as the seven-day replay sweeps past each real earthquake
   onQuake(q) {
+    if (S.view !== 'orbit') return;
     audio.quake(q.mag);
     if (q.mag >= 4.5) hud.log(`M${q.mag.toFixed(1)} · ${q.place}`, q.mag >= 6 ? 'hi' : 'warn');
     if (q.mag >= 6) pulse(0.5 + (q.mag - 6) * 0.3);
@@ -233,10 +320,60 @@ const hooks = {
   },
 };
 
+/* ---------- city bookkeeping (once a second) ---------- */
+
+const clocks = new Map(CITIES.map((c) => [c.id, new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: c.tz })]));
+let cityPart = null;
+
+function refreshCities(simMs) {
+  const when = new Date(simMs);
+  const rows = [];
+  for (const c of terra.cities) {
+    c.time = clocks.get(c.id).format(when);
+    c.sun = sunAltAz(c.lat, c.lon, simMs);
+    const title = `${c.name} · ${c.time}`;
+    if (c.label.title !== title) { c.label.title = title; c.label.dirty = true; }
+    const near = c.near ? `M${c.near.q.mag.toFixed(1)} · ${kmText(c.near.km)}` : '—';
+    rows.push({ id: c.id, time: c.time, night: c.sun.alt < -0.8, near, tip: `${c.district} — nearest quake this week: ${c.near ? `M${c.near.q.mag.toFixed(1)}, ${kmText(c.near.km).toLowerCase()} away` : 'none'}` });
+    c.part.info.stats = cityStats(c, false);
+  }
+  hud.updateCities(rows, S.descend ? S.descend.id : S.cityId);
+  if (S.view === 'city' && city.ready) {
+    const c = cityById(S.cityId);
+    const sim = city.state.sim;
+    cityPart = {
+      static: true,
+      info: {
+        id: `${c.country} · ${fmtLL(c.lat, c.lon)}`, tag: c.name, name: c.name,
+        desc: sim.active
+          ? `SIMULATED M${sim.mag.toFixed(1)} directly beneath ${c.district}. Illustrative only — not an engineering model or a forecast.`
+          : `${c.district}. ${c.note}`,
+        stats: cityStats(c, true),
+      },
+    };
+  }
+}
+
+function cityStats(c, full) {
+  const [hh, mm] = (c.time || '00:00').split(':').map(Number);
+  const rows = [
+    ['POPULATION', c.pop / 38, `≈${c.pop.toFixed(1)}M METRO`],
+    ['LOCAL TIME', (hh + mm / 60) / 24, c.time || '—'],
+    ['SUN', clamp((c.sun.alt + 90) / 180), c.sun.alt > -0.8 ? `ALT ${c.sun.alt.toFixed(0)}° · AZ ${c.sun.az.toFixed(0)}°` : `NIGHT · ${Math.abs(c.sun.alt).toFixed(0)}° BELOW`],
+    ['NEAREST QUAKE', c.near ? clamp(1 - c.near.km / 3000) : 0, c.near ? `M${c.near.q.mag.toFixed(1)} · ${kmText(c.near.km)}` : '—'],
+  ];
+  if (!full) return rows;
+  const st = city.state;
+  rows.push(['STRUCTURES', 1, num(st.count)], ['SURVEYED', st.measured / st.count, `${Math.round((st.measured / st.count) * 100)}% OF HEIGHTS`]);
+  if (st.sim.active) rows.push(['COLLAPSED', st.sim.collapsed / st.count, `${num(st.sim.collapsed)} · SIM`], ['DAMAGED', st.sim.damaged / st.count, `${num(st.sim.damaged)} · SIM`]);
+  return rows;
+}
+
+hud.buildCityList(CITIES, (id) => enterCity(id));
+
 /* ---------- input ---------- */
 
 addEventListener('pointermove', (e) => {
-  pointerPx.x = e.clientX; pointerPx.y = e.clientY;
   pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   pointerPx.lastMove = performance.now() / 1000;
   pointerPx.inside = e.target === canvas;
@@ -248,9 +385,9 @@ addEventListener('pointerup', (e) => {
   if (!pointerPx.down) return;
   pointerPx.down = false;
   if (pointerPx.moved > 6 || e.target !== canvas || !S.online) return;
-  S.touched = true;
-  if (S.hovered) select(core.selected === S.hovered ? null : S.hovered);
-  else if (core.selected) select(null);
+  if (S.hovered && S.hovered.city) enterCity(S.hovered.city.id);
+  else if (S.hovered) select(S.selected === S.hovered ? null : S.hovered);
+  else if (S.selected) select(null);
   else pulse(1);
 });
 
@@ -260,47 +397,52 @@ controls.addEventListener('end', () => { resumeTimer = setTimeout(() => { contro
 
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
-  if (S.view === 'terra') S.zoom = clamp(S.zoom + e.deltaY * 0.03, -8.5, 46);
-  else if (e.ctrlKey || e.metaKey) S.zoom = clamp(S.zoom + e.deltaY * 0.04, -12, 22);
-  else { S.explodeTarget = clamp(S.explodeTarget + e.deltaY * 0.0011); S.touched = true; }
+  S.zoom = S.view === 'city' ? clamp(S.zoom + e.deltaY * 0.03, -20, 40) : clamp(S.zoom + e.deltaY * 0.03, -8.5, 46);
 }, { passive: false });
 
 addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement && e.code !== 'Space') return;
   if (e.code === 'Space') {
     e.preventDefault();
-    if (!e.repeat) { S.dilate = true; hud.log(S.view === 'terra' ? 'temporal fast-forward engaged' : 'temporal dilation engaged', 'hi'); }
+    if (!e.repeat) { S.dilate = true; hud.log('temporal fast-forward engaged', 'hi'); }
     return;
   }
   if (e.repeat || e.metaKey || e.ctrlKey) return;
   const k = e.key.toLowerCase();
-  if (k >= '1' && k <= '5' && S.view === 'core') setFormation(FORMATIONS[+k - 1]);
-  else if (k === 't') setView(S.view === 'terra' ? 'core' : 'terra');
+  const inCity = S.view === 'city';
+  if (k === 'x' && !inCity) setSplit(S.splitTarget > 0.5 ? 0 : 1);
+  else if (k === 'q' && inCity) triggerQuake();
+  else if (k === 'r' && inCity) { city.reset(); cityPart = null; hud.log('simulation reset'); }
+  else if (k === 'arrowright' && inCity) stepCity(1);
+  else if (k === 'arrowleft' && inCity) stepCity(-1);
   else if (k === 'm') { const order = ['holo', 'construct', 'breach']; setMode(order[(order.indexOf(S.mode) + 1) % 3]); }
-  else if (k === 'e' && S.view === 'core') S.explodeTarget = S.explodeTarget > 0.5 ? 0 : 1;
-  else if (k === 'l' && S.view === 'terra') setWarp(1);
+  else if (k === 'l') setWarp(1);
   else if (k === 'h') document.body.classList.toggle('hud-off');
   else if (k === 'p') pulse(1);
-  else if (k === 'escape') select(null);
+  else if (k === 'escape') { if (S.selected) select(null); else if (inCity || S.descend) exitCity(); else setSplit(0); }
 });
 addEventListener('keyup', (e) => {
   if (e.code === 'Space' && S.dilate) { S.dilate = false; pulse(0.6 + S.dilation * 0.9); }
 });
 addEventListener('blur', () => { S.dilate = false; });
 
-hud.el.explode.addEventListener('input', () => { S.explodeTarget = hud.el.explode.value / 100; S.touched = true; });
-document.querySelectorAll('#views button').forEach((b) => b.addEventListener('click', () => setView(b.dataset.v)));
-document.querySelectorAll('#formations button').forEach((b) => b.addEventListener('click', () => setFormation(b.dataset.f)));
+hud.el.split.addEventListener('input', () => setSplit(hud.el.split.value / 100));
+hud.el.mag.addEventListener('input', () => { S.mag = hud.el.mag.value / 10; hud.setCityUI(city.state.meta ? city.state.meta.name : '—', S.mag); });
 document.querySelectorAll('#modes button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.m)));
 document.querySelectorAll('#warp button').forEach((b) => b.addEventListener('click', () => setWarp(+b.dataset.w)));
 document.querySelectorAll('#layers button').forEach((b) => b.addEventListener('click', () => {
-  const layer = terra.layers[b.dataset.l];
-  layer.visible = !layer.visible;
-  b.classList.toggle('active', layer.visible);
-  b.setAttribute('aria-pressed', layer.visible);
-  hud.log(`data layer ${b.textContent} ${layer.visible ? 'on' : 'off'}`);
+  const on = !terra.layerState[b.dataset.l];
+  terra.setLayer(b.dataset.l, on);
+  b.classList.toggle('active', on);
+  b.setAttribute('aria-pressed', on);
+  hud.log(`data layer ${b.textContent} ${on ? 'on' : 'off'}`);
   audio.select();
 }));
+document.getElementById('exitCity').addEventListener('click', exitCity);
+document.getElementById('prevCity').addEventListener('click', () => stepCity(-1));
+document.getElementById('nextCity').addEventListener('click', () => stepCity(1));
+document.getElementById('trigger').addEventListener('click', triggerQuake);
+document.getElementById('resetCity').addEventListener('click', () => { city.reset(); cityPart = null; hud.log('simulation reset'); });
 document.getElementById('pulse').addEventListener('click', () => pulse(1));
 const audioBtn = document.getElementById('audio');
 audioBtn.addEventListener('click', () => {
@@ -308,7 +450,7 @@ audioBtn.addEventListener('click', () => {
   audioBtn.textContent = on ? 'AUDIO ON' : 'AUDIO OFF';
   audioBtn.classList.toggle('active', on);
 });
-document.querySelectorAll('.dock button').forEach((b) => b.addEventListener('pointerenter', () => audio.blip()));
+document.querySelectorAll('.dock button, #cityList button').forEach((b) => b.addEventListener('pointerenter', () => audio.blip()));
 
 function resize() {
   const w = innerWidth, h = innerHeight;
@@ -331,10 +473,13 @@ resize();
 /* ---------- loop ---------- */
 
 const clock = new THREE.Clock();
+const rotY = new THREE.Matrix4();
+const rotYInv = new THREE.Matrix4();
 let fpsAcc = 0, fpsN = 0, lowFor = 0;
 let lastHover = null;
-let lastLock = null;
-let feedTick = 0;
+let lastFocus = null;
+let secTick = 1;
+let earth = { sub: '—', sun: '—', moon: '—', q24: '—', energy: '—', star: '—' };
 
 function frame() {
   requestAnimationFrame(frame);
@@ -345,30 +490,21 @@ function tick(forceDt) {
   const realDt = clock.getDelta();
   const rawDt = forceDt || Math.min(realDt, 0.05);
   const now = performance.now() / 1000;
-  const planet = S.view === 'terra';
+  const inCity = S.view === 'city';
 
-  // intro: assemble the core, then open the link to the planet
-  if (S.online) {
-    if (!S.introPulse && now - S.onlineAt > 2.3) {
-      S.introPulse = true;
-      pulse(0.9);
-      hud.banner('NYX-7 ONLINE', 'cognitive core at your command');
-    }
-    if (!S.autoTerra && now - S.onlineAt > 6.8) {
-      S.autoTerra = true;
-      if (!S.touched) setView('terra', true);
-    }
+  if (S.online && !S.introPulse && now - S.onlineAt > 2.6) {
+    S.introPulse = true;
+    pulse(0.9);
+    const st = quakeStats();
+    hud.banner('PLANETARY LINK', `${terra.census.total ? `${num(terra.census.total)} objects in orbit` : 'acquiring orbital catalog'}${st ? ` · ${st.n} earthquakes this week` : ''}`);
   }
 
-  // SPACE: in the core it slows the world down; over the planet it runs the clock forward
+  // SPACE runs the planet's clock forward — orbits streak, the terminator sweeps, cities fall into night
   S.dilation += ((S.dilate ? 1 : 0) - S.dilation) * Math.min(1, rawDt * (S.dilate ? 2.5 : 5));
-  S.timeScale = lerp(1, planet ? 0.6 : 0.08, S.dilation);
-  const dt = rawDt * S.timeScale;
+  const dt = rawDt * lerp(1, 0.6, S.dilation);
   U.time.value += dt;
   const t = U.time.value;
-
-  // simulated planetary time
-  const rate = planet ? S.warp + S.dilation * S.dilation * 5400 : 1;
+  const rate = S.warp + S.dilation * S.dilation * 5400;
   S.simOffset += rawDt * (rate - 1);
   if (S.warp === 1 && !S.dilate) S.simOffset *= Math.exp(-rawDt * 1.3); // drift back to the present
   const simMs = simNow();
@@ -378,15 +514,26 @@ function tick(forceDt) {
   U.colorA.value.lerp(target.a, cf);
   U.colorB.value.lerp(target.b, cf);
   U.colorRain.value.lerp(target.rain, cf);
-  const rainT = S.online ? target.rainI * (planet ? 0.7 : 1) : 0;
-  rain.uniforms.uIntensity.value += (rainT - rain.uniforms.uIntensity.value) * cf * 0.6;
+  rain.uniforms.uIntensity.value += ((S.online ? target.rainI * 0.7 : 0) - rain.uniforms.uIntensity.value) * cf * 0.6;
 
-  // view blend + exploded view
-  S.terra = clamp(S.terra + ((planet ? 1 : -1) * rawDt) / 2.4);
-  const coreK = 1 - ease(clamp(S.terra * 2.2));
-  const terraK = ease(clamp((S.terra - 0.28) / 0.72));
-  S.explode += (S.explodeTarget - S.explode) * (1 - Math.exp(-rawDt * 3.2));
-  hud.setExplodeUI(S.explodeTarget);
+  // descent: fly at the city while its model loads, then cut to the street grid
+  if (S.descend) {
+    const d = S.descend;
+    d.t += rawDt;
+    if (d.failed) { hud.log(`city model unavailable: ${d.id}`, 'warn'); S.descend = null; if (S.view === 'orbit') S.zoom = 0; }
+    else if (d.data && (d.fromOrbit ? d.t > 1.5 : S.cityK < 0.03)) arriveCity(d);
+  }
+  const wantCity = S.view === 'city' && !S.descend;
+  S.cityK = clamp(S.cityK + ((wantCity ? 1 : -1) * rawDt) / 1.5);
+  // (hopping city to city fades the model, not the planet back in)
+  S.orbitK = clamp(S.orbitK + ((S.view === 'orbit' ? 1 : -1) * rawDt) / 0.8);
+  S.intro = clamp(S.intro + (S.online ? rawDt / 2.6 : 0));
+  const terraK = ease(S.intro) * ease(S.orbitK);
+  const cityScale = ease(clamp((S.cityK - 0.3) / 0.7));
+
+  S.split += (S.splitTarget - S.split) * (1 - Math.exp(-rawDt * 2.2));
+  if (Math.abs(S.split - S.splitTarget) < 0.0005) S.split = S.splitTarget;
+  hud.setSplitUI(S.splitTarget);
 
   // shockwaves
   U.burstR.value += dt * 26;
@@ -400,7 +547,6 @@ function tick(forceDt) {
   if (breach && Math.random() < rawDt * 0.9) S.glitch = Math.max(S.glitch, 0.5);
 
   // camera
-  controls.autoRotateSpeed = planet ? 0.28 : 0.45;
   if (S.camGoal) {
     const g = S.camGoal;
     g.t += rawDt;
@@ -408,82 +554,96 @@ function tick(forceDt) {
     const dTheta = Math.atan2(Math.sin(g.theta - sph.theta), Math.cos(g.theta - sph.theta));
     const k = Math.min(1, rawDt * 2.2);
     sph.theta += dTheta * k;
-    sph.phi += (g.phi - sph.phi) * k;
+    sph.phi += (clamp(g.phi, controls.minPolarAngle, controls.maxPolarAngle) - sph.phi) * k;
     camera.position.setFromSpherical(sph);
     if (g.t > 4 || Math.abs(dTheta) < 0.01) S.camGoal = null;
   }
   controls.update();
   // frame the planet plus its low-orbit shell in whichever screen axis is tighter
-  const halfFov = Math.min(25 * Math.PI / 180, Math.atan(Math.tan(25 * Math.PI / 180) * camera.aspect));
-  const dist = lerp(25 + S.explode * 11 + S.dilation * -2.5, 9.4 / Math.sin(halfFov), S.terra) + S.zoom;
+  const halfFov = Math.min((25 * Math.PI) / 180, Math.atan(Math.tan((25 * Math.PI) / 180) * camera.aspect));
+  const fit = 9.4 / Math.sin(halfFov);
+  const dist = Math.max(8, lerp(fit * 1.7, fit + S.split * 0.42 * fit, ease(S.orbitK)) + S.zoom);
   sph.setFromVector3(camera.position);
   sph.radius += (dist - sph.radius) * Math.min(1, rawDt * 3);
   camera.position.setFromSpherical(sph);
   camera.lookAt(origin);
-  const fov = 50 + S.dilation * (planet ? 10 : 22);
+  const fov = 50 + S.dilation * 10;
   if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
   camera.updateMatrixWorld();
 
-  // planet (before the swarm: the swarm follows its spin)
-  terra.update(rawDt, simMs, terraK, camera, hooks);
+  // planet (before the swarm: the swarm follows its spin and its split)
+  terra.update(rawDt, simMs, terraK, camera, hooks, S.split);
+  const c = inCity ? cityById(S.cityId) : null;
+  const shake = city.update(rawDt, cityScale, c && c.sun ? c.sun : { alt: 40, az: 150 });
 
   // picking + pointer ray
   raycaster.setFromCamera(pointer, camera);
   let hit = null;
-  if (S.online && pointerPx.inside && !(pointerPx.down && pointerPx.moved > 6)) {
-    if (S.terra > 0.7) hit = terra.pick(raycaster, pointer, camera, innerWidth, innerHeight);
-    if (!hit) {
-      const hits = raycaster.intersectObjects(S.terra > 0.5 ? panels.pickables : pickables, false);
-      if (hits.length) hit = hits[0].object.userData.part;
-    }
-  } else terra.cursor.on = false;
+  const canPick = S.online && pointerPx.inside && !(pointerPx.down && pointerPx.moved > 6) && !S.descend;
+  if (canPick && inCity) hit = city.pick(raycaster.ray);
+  else if (canPick && terraK > 0.7) hit = terra.pick(raycaster, pointer, camera, innerWidth, innerHeight);
+  else terra.cursor.on = false;
+  if (canPick && !hit) {
+    const hits = raycaster.intersectObjects(panels.pickables, false);
+    if (hits.length) hit = hits[0].object.userData.part;
+  }
   if (hit !== lastHover) {
     if (lastHover) lastHover.hoverTarget = 0;
     if (hit) { hit.hoverTarget = 1; audio.blip(); }
     lastHover = hit;
     S.hovered = hit;
   }
-  const focus = core.selected || hit;
-  if (focus !== lastLock) { terra.setLock(focus); lastLock = focus; }
+  const focus = S.selected || hit || (inCity ? cityPart : null);
+  if (focus !== lastFocus) {
+    terra.setLock(inCity ? null : focus);
+    city.setHover(focus);
+    lastFocus = focus;
+  }
   hud.reticleState(hit ? hit.info.tag || hit.info.id : '', pointerPx.down);
-  hud.inspect(focus, !!core.selected);
+  hud.inspect(focus, !!S.selected);
 
+  // swarm
   swarm.setRay(raycaster.ray);
   const su = swarm.uniforms;
   const landed = swarm.formation === 'terra';
-  const active = now - pointerPx.lastMove < 1.2 ? 1 : 0.3;
+  const moving = now - pointerPx.lastMove < 1.2 ? 1 : 0.3;
   const f4 = Math.min(1, rawDt * 4);
-  su.uMouseForce.value += ((pointerPx.inside ? active * (landed ? 0.55 : 1) : 0) - su.uMouseForce.value) * f4;
-  su.uChaos.value += ((breach ? (landed ? 0.06 : 0.4) : 0) + (planet ? 0 : S.dilation * 0.3) - su.uChaos.value) * Math.min(1, rawDt * 2);
-  su.uDrift.value += ((landed ? 0.012 : 0.16) - su.uDrift.value) * Math.min(1, rawDt * 1.5);
+  const force = !pointerPx.inside || S.split > 0.02 ? 0 : moving * (landed ? 0.55 : 0.4);
+  su.uMouseForce.value += (force - su.uMouseForce.value) * f4;
+  su.uChaos.value += ((breach ? 0.06 : 0) - su.uChaos.value) * Math.min(1, rawDt * 2);
+  su.uDrift.value += ((landed ? 0.012 : 0.03) - su.uDrift.value) * Math.min(1, rawDt * 1.5);
   su.uSunMix.value += ((landed ? 1 : 0) - su.uSunMix.value) * Math.min(1, rawDt * 1.5);
-  su.uOpacity.value += ((landed ? 0.24 : 0.34) - su.uOpacity.value) * f4;
-  su.uSize.value += ((landed ? 0.05 : 0.085) - su.uSize.value) * f4;
-
-  // world
-  core.root.visible = coreK > 0.004;
-  core.root.scale.setScalar(Math.max(0.001, coreK));
-  core.update(dt, rawDt, t, S.explode, breach ? 1 : S.dilation * 0.5);
+  su.uOpacity.value += ((landed ? 0.24 : 0.3) - su.uOpacity.value) * f4;
+  su.uSize.value += ((landed ? 0.05 : 0.07) - su.uSize.value) * f4;
+  su.uSplitMix.value = landed ? 1 : 0;
+  if (landed) {
+    // hemisphere transforms, carried from the planet's frame into the swarm's
+    rotY.makeRotationY(landYaw);
+    rotYInv.makeRotationY(-landYaw);
+    su.uHalfP.value.copy(rotY).multiply(terra.halves[0].g.matrix).multiply(rotYInv);
+    su.uHalfN.value.copy(rotY).multiply(terra.halves[1].g.matrix).multiply(rotYInv);
+    su.uCutN.value.copy(terra.uCutN.value).applyAxisAngle(UP, landYaw);
+  }
   swarm.update(dt);
-  panels.update(dt, rawDt, t, S.explode, core.selected, ease(S.terra));
+  // the floating displays ring the scene just beyond the camera, however far it pulls back
+  panels.update(dt, rawDt, t, 0, S.selected, clamp(((sph.radius + 15) / 13.5 - 1) / 1.15, 1, 3.2));
   rain.mesh.rotation.y += dt * 0.004;
 
   // lens
   const L = post.lens;
   L.uTime.value = now % 1000;
   L.uGlitch.value = S.glitch;
-  L.uWarp.value = S.dilation * (planet ? 0.45 : 1);
-  L.uAberr.value = 0.0016 + (breach ? 0.0025 : 0) + S.energy * 0.002;
+  L.uWarp.value = S.dilation * 0.45;
+  L.uAberr.value = 0.0016 + (breach ? 0.0025 : 0) + S.energy * 0.002 + shake * 0.002;
   L.uWaveR.value = S.waveR;
   L.uWaveAmp.value = S.waveAmp;
   origin.set(0, 0, 0).project(camera);
   L.uCenter.value.set(origin.x * 0.5 + 0.5, origin.y * 0.5 + 0.5);
   origin.set(0, 0, 0);
-  const shake = (breach ? 0.0016 : 0) + S.waveAmp * 0.004;
-  L.uShake.value.set((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
-  const dampT = lerp(planet ? Math.min(target.damp, 0.62) : target.damp, planet ? 0.9 : 0.94, S.dilation);
-  post.after.damp += (dampT - post.after.damp) * Math.min(1, rawDt * 4);
-  post.bloom.strength = lerp(0.42, 0.3, S.terra) + S.energy * 0.3 + S.dilation * 0.3 + (breach ? 0.15 : 0);
+  const jolt = (breach ? 0.0016 : 0) + S.waveAmp * 0.004 + shake * 0.006;
+  L.uShake.value.set((Math.random() - 0.5) * jolt, (Math.random() - 0.5) * jolt);
+  post.after.damp += (lerp(Math.min(target.damp, 0.62), 0.9, S.dilation) - post.after.damp) * Math.min(1, rawDt * 4);
+  post.bloom.strength = 0.3 + S.energy * 0.3 + S.dilation * 0.3 + (breach ? 0.15 : 0);
   audio.dilate(S.dilation);
 
   post.composer.render(rawDt);
@@ -498,42 +658,57 @@ function tick(forceDt) {
     fpsAcc = 0; fpsN = 0;
   }
 
-  // ISS readout rides on the orbital catalog
-  feedTick += rawDt;
-  const iss = terra.stations[0];
-  if (feedTick > 0.5) {
-    feedTick = 0;
+  // once a second: clocks, sun angles, whole-planet numbers
+  secTick += rawDt;
+  if (secTick > (S.dilation > 0.1 || S.warp > 1 ? 0.2 : 1)) {
+    secTick = 0;
+    refreshCities(simMs);
+    const iss = terra.stations[0];
     if (iss.el) hud.setFeed('iss', feeds.sats.status, `${iss.alt.toFixed(0)} KM · ${fmtLL(iss.ll.lat, iss.ll.lon)}`);
+    const e = earthNow(simMs);
+    const st = quakeStats();
+    const cs = terra.census;
+    earth = {
+      sub: fmtLL(e.subLat, e.subLon), sun: `${e.sunAU.toFixed(4)} AU`,
+      moon: `${e.moon.replace('WAXING', 'WAX').replace('WANING', 'WAN')} ${(e.moonLit * 100).toFixed(0)}%`,
+      q24: st ? `${st.n24}` : '—', energy: st ? energyText(st.joules) : '—',
+      star: cs.total ? `${Math.round((cs.starlink / cs.total) * 100)}% OF ${num(cs.total)}` : '—',
+    };
   }
 
   const st = quakeStats();
   sph.setFromVector3(camera.position);
+  const cur = terra.cursor;
   hud.update(rawDt, {
-    camera, explode: S.explode, time: t, energy: S.energy + S.dilation * 0.6 + (breach ? 0.5 : 0),
-    mode: S.mode, view: S.view, timeScale: S.timeScale, spherical: sph, formation: swarm.formation, fps: S.fps,
-    online: S.online, colorCss: PALETTES[S.mode].a,
-    simMs, simOffset: S.simOffset, rate,
+    camera, time: t, energy: S.energy + S.dilation * 0.6 + (breach ? 0.5 : 0) + shake,
+    mode: S.mode, spherical: sph, fps: S.fps, online: S.online, colorCss: PALETTES[S.mode].a,
+    simMs, simOffset: S.simOffset, rate, earth,
     status: breach ? PALETTES.breach.status
-      : planet ? `PLANETARY LINK · ${terra.census.total ? `${num(terra.census.total)} OBJECTS` : 'ACQUIRING'}`
-        : PALETTES[S.mode].status,
+      : inCity && city.ready ? `CITY UPLINK · ${city.state.meta.name} · ${num(city.state.count)} STRUCTURES`
+        : S.split > 0.3 ? `FRACTURE ${Math.round(S.split * 100)}% · ${terra.section.count} HYPOCENTRES ON SECTION`
+          : `PLANETARY LINK · ${terra.census.total ? `${num(terra.census.total)} OBJECTS` : 'ACQUIRING'}`,
     real: { kp: kpNow(), wind: feeds.wind.data && Number.isFinite(feeds.wind.data.speed) ? feeds.wind.data.speed : null, maxMag: st && st.max24 ? st.max24.mag : null },
-    rangeKm: Math.max(0, (sph.radius / RE - 1) * 6378.137),
-    cursor: terra.cursor.on ? fmtLL(terra.cursor.lat, terra.cursor.lon) : '—',
-    calloutVis: { core: smooth(0.22, 0.5, S.explode) * coreK, terra: smooth(0.8, 1, terraK) },
+    range: inCity ? `${num(Math.round((sph.radius / CITY_SPAN) * CITY_SIZE))} m` : `${num(Math.round(Math.max(0, (sph.radius / RE - 1) * RE_KM)))} km`,
+    cursor: inCity ? (hit && hit.building != null ? hit.info.tag : '—')
+      : !cur.on ? '—' : cur.depth >= 0 ? `DEPTH ${num(Math.round(cur.depth))} KM` : fmtLL(cur.lat, cur.lon),
+    calloutVis: { terra: smooth(0.8, 1, terraK), city: smooth(0.85, 1, cityScale) },
   });
 }
 
 /* ---------- boot ---------- */
 
-swarm.uniforms.uMorph.value = 0;
 hud.boot(() => {
   S.online = true;
   S.onlineAt = performance.now() / 1000;
-  S.explodeTarget = 0; // assemble from exploded
+  S.simOffset = -3 * 3600; // arrive from three hours ago and catch up to now
+  landSwarm();
+  // swing round to the visitor's own side of the planet (longitude from their clock, no permission needed)
+  lookAtSurface(llToVec(24, clamp(-new Date().getTimezoneOffset() / 4, -180, 180), 1));
   hud.log('operator authenticated', 'hi');
-  hud.log('core assembly sequence start');
+  hud.log('planetary link established');
+  hud.log('synchronising orbital catalog to present…');
 });
 frame();
 
 // handy for poking at things from the console
-window.nyx = { S, camera, pulse, setMode, setFormation, setView, setWarp, select, tick, core, swarm, post, panels, terra, feeds };
+window.nyx = { S, camera, pulse, setMode, setSplit, setWarp, enterCity, exitCity, triggerQuake, select, tick, swarm, post, panels, terra, city, feeds };

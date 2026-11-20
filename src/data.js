@@ -173,6 +173,13 @@ export function startFeeds() {
   setInterval(() => load('kp', normKp), 900e3);
 }
 
+/* ---------- 3D city models: OpenStreetMap extracts bundled in /public/data/cities ---------- */
+const cityCache = new Map();
+export function loadCity(id) {
+  if (!cityCache.has(id)) cityCache.set(id, getJSON(`${BASE}data/cities/${id}.json`, 30000).catch((e) => { cityCache.delete(id); throw e; }));
+  return cityCache.get(id);
+}
+
 /* ---------- small derived helpers used by HUD + panels ---------- */
 export const kpNow = () => (feeds.kp.data && feeds.kp.data.length ? feeds.kp.data[feeds.kp.data.length - 1].kp : null);
 export const kpWord = (k) => (k >= 7 ? 'SEVERE STORM' : k >= 5 ? 'STORM' : k >= 4 ? 'ACTIVE' : k >= 2 ? 'UNSETTLED' : 'QUIET');
@@ -185,7 +192,9 @@ export function quakeStats() {
     if (q.mag > max.mag) max = q;
     if (q.time > dayAgo) { n24++; if (!max24 || q.mag > max24.mag) max24 = q; }
   }
-  return { n: list.length, n24, max, max24 };
+  let joules = 0;
+  for (const q of list) joules += Math.pow(10, 1.5 * q.mag + 4.8); // Gutenberg–Richter energy relation
+  return { n: list.length, n24, max, max24, joules };
 }
 export function ago(ms) {
   const s = Math.max(0, (Date.now() - ms) / 1000);

@@ -400,7 +400,7 @@ const PANEL_INFO = [
   ['AUX-02', 'PROXIMITY SWEEP', 'Tracks every object within forty kilometres.'],
   ['AUX-03', 'MEMORY LATTICE', 'Live view of the working set. It never stops rewriting itself.'],
   ['AUX-04', 'SEISMIC MONITOR', 'Every M2.5+ earthquake USGS located this week, in six-hour bins.'],
-  ['AUX-05', 'NEURAL BRIDGE', 'The link between the core and the operator. That would be you.'],
+  ['AUX-05', 'NEURAL BRIDGE', 'The link between the planet and the operator. That would be you.'],
   ['AUX-06', 'ORBITAL CENSUS', 'Active payloads in the CelesTrak catalog, sorted by orbit. Most of them are one constellation.'],
 ];
 
@@ -432,7 +432,7 @@ export function createPanels() {
     const [id, name, desc] = PANEL_INFO[i];
     const part = {
       obj: mesh, hover: 0, hoverTarget: 0, dim: 1, mats: [mat], isPanel: true,
-      info: { id, name, desc, stats: [['UPLINK', 0.8 + h1(i) * 0.19], ['REFRESH', 0.6 + h1(i + 4) * 0.3], ['NOISE', h1(i + 8) * 0.4]] },
+      info: { id, name, desc, stats: [['UPLINK', 0.8 + h1(i) * 0.19, `${(80 + h1(i) * 19).toFixed(0)}%`], ['REFRESH', 0.6 + h1(i + 4) * 0.3, `${(6 + h1(i + 4) * 4).toFixed(0)} HZ`]] },
     };
     mesh.userData.part = part;
     pickables.push(mesh);

@@ -4,14 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>NYX-7 // Planetary Link</title>
-  <meta name="description" content="A holographic command core wired to the real planet: every active satellite, the last week of earthquakes, wildfires and space weather — live, in 3D." />
+  <meta name="description" content="The real Earth as a hologram: every active satellite, the last week of earthquakes, wildfires and space weather, a planet you can split open, and real cities in 3D." />
   <meta property="og:title" content="NYX-7 // Planetary Link" />
-  <meta property="og:description" content="Every satellite in orbit. Every earthquake this week. The real Earth, live, as a hologram you can touch." />
+  <meta property="og:description" content="Every satellite in orbit. Every earthquake this week. Split the planet open, then drop into a real city in 3D." />
   <meta name="theme-color" content="#01030a" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2301030a'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%2335e8ff' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%2335e8ff'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/src/style.css" />
 </head>
-<body class="mode-holo view-core">
+<body class="mode-holo view-orbit">
   <canvas id="scene"></canvas>
   <svg id="leaders" aria-hidden="true"></svg>
   <div id="labels" aria-hidden="true"></div>
@@ -29,37 +29,39 @@
         </svg>
         <div>
           <div class="brand-name">NYX<span>-7</span></div>
-          <div class="brand-sub">COGNITIVE CORE · PLANETARY LINK</div>
+          <div class="brand-sub">PLANETARY LINK</div>
         </div>
       </div>
 
       <div class="status">
-        <span class="dot"></span><span id="statusText">ALL SYSTEMS NOMINAL</span>
+        <span class="dot"></span><span id="statusText">ACQUIRING</span>
         <span class="sep">//</span>LAYER <b id="modeName">HOLO</b>
         <span class="sep">//</span>T× <b id="timeScale">1.00</b>
       </div>
 
       <div class="clock">
-        <div id="clock">00:00:00<small>.000</small></div>
+        <div id="clock">00:00:00<small> UTC</small></div>
         <div id="date">—</div>
       </div>
     </header>
 
+    <div class="ticker" aria-hidden="true"><div id="ticker"></div></div>
+
     <aside class="left">
-      <section class="panel">
-        <h3><span>01</span>CORE TELEMETRY</h3>
+      <section class="panel" id="telemetry">
+        <h3><span>01</span>LIVE TELEMETRY</h3>
         <div class="gauges">
-          <div class="gauge" data-g="output">
+          <div class="gauge" data-g="kp">
             <svg viewBox="0 0 80 80"><circle class="track" cx="40" cy="40" r="32" /><circle class="val" cx="40" cy="40" r="32" /><circle class="ticks" cx="40" cy="40" r="38" /></svg>
-            <b>00</b><label>OUTPUT</label>
+            <b>—</b><label>Kp INDEX</label>
           </div>
-          <div class="gauge" data-g="stability">
+          <div class="gauge" data-g="wind">
             <svg viewBox="0 0 80 80"><circle class="track" cx="40" cy="40" r="32" /><circle class="val" cx="40" cy="40" r="32" /><circle class="ticks" cx="40" cy="40" r="38" /></svg>
-            <b>00</b><label>STABILITY</label>
+            <b>—</b><label>SOLAR KM/S</label>
           </div>
-          <div class="gauge" data-g="entropy">
+          <div class="gauge" data-g="mag">
             <svg viewBox="0 0 80 80"><circle class="track" cx="40" cy="40" r="32" /><circle class="val" cx="40" cy="40" r="32" /><circle class="ticks" cx="40" cy="40" r="38" /></svg>
-            <b>00</b><label>ENTROPY</label>
+            <b>—</b><label>MAX M · 24H</label>
           </div>
         </div>
         <canvas id="wave" width="560" height="120"></canvas>
@@ -77,18 +79,30 @@
         </ul>
       </section>
 
+      <section class="panel" id="earthnow">
+        <h3><span>03</span>EARTH NOW</h3>
+        <dl class="readout">
+          <div><dt>SUBSOLAR POINT</dt><dd id="nSub">—</dd></div>
+          <div><dt>SUN DISTANCE</dt><dd id="nSun">—</dd></div>
+          <div><dt>MOON</dt><dd id="nMoon">—</dd></div>
+          <div><dt>QUAKES · 24H</dt><dd id="nQ24">—</dd></div>
+          <div><dt>SEISMIC ENERGY · 7D</dt><dd id="nEnergy">—</dd></div>
+          <div><dt>STARLINK SHARE</dt><dd id="nStar">—</dd></div>
+        </dl>
+      </section>
+
       <section class="panel grow">
-        <h3><span>03</span>SYSTEM LOG</h3>
+        <h3><span>04</span>SYSTEM LOG</h3>
         <div id="log"></div>
       </section>
     </aside>
 
     <aside class="right">
       <section class="panel" id="inspector">
-        <h3><span>04</span>INSPECTOR</h3>
+        <h3><span>05</span>INSPECTOR</h3>
         <div class="insp-idle">
           <div class="scan-box"><i></i></div>
-          <p>NO TARGET LOCKED<br /><small>hover a component to scan · click to isolate</small></p>
+          <p>NO TARGET LOCKED<br /><small>hover anything on the planet to scan it</small></p>
         </div>
         <div class="insp-body">
           <div class="insp-id" id="inspId">—</div>
@@ -99,13 +113,18 @@
         </div>
       </section>
 
-      <section class="panel">
-        <h3><span>05</span>VIEWPORT</h3>
+      <section class="panel" id="cities">
+        <h3><span>06</span>CITY UPLINK <em>3D</em></h3>
+        <ul id="cityList"></ul>
+      </section>
+
+      <section class="panel" id="viewport">
+        <h3><span>07</span>VIEWPORT</h3>
         <dl class="readout">
           <div><dt>AZIMUTH</dt><dd id="rAz">000.0°</dd></div>
           <div><dt>ELEVATION</dt><dd id="rEl">+00.0°</dd></div>
-          <div><dt>RANGE</dt><dd id="rDist">00.0 m</dd></div>
-          <div><dt id="rSwarmLabel">SWARM</dt><dd id="rSwarm">0</dd></div>
+          <div><dt>RANGE</dt><dd id="rDist">—</dd></div>
+          <div><dt>CURSOR</dt><dd id="rCursor">—</dd></div>
           <div><dt>FRAME</dt><dd id="rFps">00 FPS</dd></div>
           <div><dt>UPTIME</dt><dd id="rUp">00:00</dd></div>
         </dl>
@@ -113,18 +132,11 @@
     </aside>
 
     <footer class="dock">
-      <div class="group" id="views">
-        <label>VIEW</label>
-        <div class="btns">
-          <button data-v="core" class="active">CORE</button>
-          <button data-v="terra">TERRA</button>
-        </div>
+      <div class="group wide only-orbit">
+        <label>FRACTURE <output id="splitVal">000%</output></label>
+        <input type="range" id="split" min="0" max="100" value="0" aria-label="Split the planet open" />
       </div>
-      <div class="group wide only-core">
-        <label>SEPARATION <output id="explodeVal">000%</output></label>
-        <input type="range" id="explode" min="0" max="100" value="0" aria-label="Exploded view separation" />
-      </div>
-      <div class="group only-terra" id="warp">
+      <div class="group only-orbit" id="warp">
         <label>TIME <output id="simClock">LIVE</output></label>
         <div class="btns">
           <button data-w="1" class="active">LIVE</button>
@@ -133,25 +145,37 @@
           <button data-w="3600">×3600</button>
         </div>
       </div>
-      <div class="group only-terra" id="layers">
+      <div class="group only-orbit" id="layers">
         <label>DATA LAYERS</label>
         <div class="btns">
           <button data-l="sats" class="active">ORBITAL</button>
           <button data-l="quakes" class="active">SEISMIC</button>
           <button data-l="events" class="active">EVENTS</button>
           <button data-l="aurora" class="active">AURORA</button>
+          <button data-l="cities" class="active">CITIES</button>
         </div>
       </div>
-      <div class="group only-core" id="formations">
-        <label>SWARM FORMATION</label>
+
+      <div class="group only-city">
+        <label>CITY <output id="cityName">—</output></label>
         <div class="btns">
-          <button data-f="nebula" class="active"><kbd>1</kbd>NEBULA</button>
-          <button data-f="sphere"><kbd>2</kbd>SHELL</button>
-          <button data-f="helix"><kbd>3</kbd>HELIX</button>
-          <button data-f="knot"><kbd>4</kbd>KNOT</button>
-          <button data-f="lattice"><kbd>5</kbd>LATTICE</button>
+          <button id="exitCity">◂ ORBIT</button>
+          <button id="prevCity">PREV</button>
+          <button id="nextCity">NEXT</button>
         </div>
       </div>
+      <div class="group wide only-city">
+        <label>STRESS TEST <output id="magVal">M 7.0</output></label>
+        <input type="range" id="mag" min="50" max="90" value="70" aria-label="Simulated earthquake magnitude" />
+      </div>
+      <div class="group only-city">
+        <label>SIMULATION</label>
+        <div class="btns">
+          <button id="trigger">TRIGGER</button>
+          <button id="resetCity">RESET</button>
+        </div>
+      </div>
+
       <div class="group" id="modes">
         <label>REALITY LAYER</label>
         <div class="btns">
@@ -170,8 +194,7 @@
     </footer>
 
     <div class="hints" id="hints"></div>
-    <div class="credits">DATA · USGS · CELESTRAK · NOAA SWPC · NASA EONET · NATURAL EARTH</div>
-
+    <div class="credits">DATA · USGS · CELESTRAK · NOAA SWPC · NASA EONET · NATURAL EARTH · © OPENSTREETMAP CONTRIBUTORS</div>
     <div id="banner"></div>
   </div>
 

@@ -5,15 +5,15 @@ import * as THREE from 'three';
 export const PALETTES = {
   holo: {
     label: 'HOLO', a: '#35e8ff', b: '#8a7bff', rain: '#18ffa6',
-    rainI: 0.3, damp: 0.5, status: 'ALL SYSTEMS NOMINAL',
+    rainI: 0.3, damp: 0.5, status: 'PLANETARY LINK',
   },
   construct: {
     label: 'CONSTRUCT', a: '#00ff88', b: '#d2ffe0', rain: '#00ff6a',
-    rainI: 1.0, damp: 0.74, status: 'CONSTRUCT LAYER LOADED',
+    rainI: 1.0, damp: 0.74, status: 'CONSTRUCT LAYER',
   },
   breach: {
     label: 'BREACH', a: '#ff2e57', b: '#ffa23f', rain: '#ff4530',
-    rainI: 0.55, damp: 0.84, status: 'CONTAINMENT BREACH',
+    rainI: 0.55, damp: 0.84, status: 'SIGNAL BREACH · LINK UNSTABLE',
   },
 };
 

@@ -1,10 +1,15 @@
 import * as THREE from 'three';
 import { U } from './shared.js';
 
+/* 80,000 points that morph between whatever shapes they are handed: the
+   continents, a city's survey grid. They bend away from the pointer, ride the
+   shockwaves, and split with the planet. */
+
 const VERT = /* glsl */ `
 attribute vec3 aTo; attribute vec4 aSeed;
-uniform float uTime, uMorph, uScale, uSize, uBurstR, uBurstAmp, uMouseForce, uChaos, uDrift, uSunMix;
-uniform vec3 uRayO, uRayD, uSun;
+uniform float uTime, uMorph, uScale, uSize, uBurstR, uBurstAmp, uMouseForce, uChaos, uDrift, uSunMix, uSplitMix;
+uniform vec3 uRayO, uRayD, uSun, uCutN;
+uniform mat4 uHalfP, uHalfN;
 varying float vMix; varying float vAlpha; varying float vSpark; varying float vNight;
 
 vec3 flow(vec3 p, float t){
@@ -39,6 +44,10 @@ void main(){
   float w = exp(-pow(r - uBurstR, 2.) * .12) * uBurstAmp;
   p += normalize(p + 1e-4) * w * 3.5;
 
+  // each point follows the hemisphere its landing spot belongs to
+  vec3 ph = ((dot(aTo, uCutN) >= 0. ? uHalfP : uHalfN) * vec4(p, 1.)).xyz;
+  p = mix(p, ph, uSplitMix * m);
+
   vec4 mv = modelViewMatrix * vec4(p, 1.);
   gl_Position = projectionMatrix * mv;
   float tw = .65 + .35 * sin(uTime * (1.5 + aSeed.z * 4.) + aSeed.w * 60.);
@@ -64,122 +73,32 @@ void main(){
   gl_FragColor = vec4(col * a * vAlpha * uOpacity, 1.);
 }`;
 
-const TAU = Math.PI * 2;
-const rnd = Math.random;
-const gauss = () => (rnd() + rnd() + rnd() + rnd() - 2) * 0.7;
-function randDir(out) {
-  const u = rnd() * 2 - 1;
-  const a = rnd() * TAU;
-  const s = Math.sqrt(1 - u * u);
-  out[0] = s * Math.cos(a); out[1] = u; out[2] = s * Math.sin(a);
-  return out;
-}
-
-const tmp = [0, 0, 0];
-const GEN = {
-  nebula(i, n, o) {
-    if (rnd() < 0.16) {
-      randDir(tmp);
-      const r = 11 + 26 * Math.cbrt(rnd());
-      o[0] = tmp[0] * r; o[1] = tmp[1] * r * 0.6; o[2] = tmp[2] * r;
-      return;
-    }
-    const arm = i % 3;
-    const r = 7.5 + Math.pow(rnd(), 0.75) * 30;
-    const a = (arm * TAU) / 3 + r * 0.2 + gauss() * 0.34;
-    o[0] = Math.cos(a) * r;
-    o[1] = gauss() * (0.35 + 2.4 * Math.exp(-r * 0.07));
-    o[2] = Math.sin(a) * r;
-  },
-  sphere(i, n, o) {
-    const y = 1 - (2 * (i + 0.5)) / n;
-    const rad = Math.sqrt(1 - y * y);
-    const phi = i * 2.399963;
-    const band = i % 5 === 0 ? 15 : i % 5 === 1 ? 12 : 9.2;
-    const R = band + gauss() * 0.06;
-    o[0] = Math.cos(phi) * rad * R; o[1] = y * R; o[2] = Math.sin(phi) * rad * R;
-  },
-  helix(i, n, o) {
-    let t = rnd() * 2 - 1;
-    const strand = i % 2;
-    const r = 6;
-    if (rnd() < 0.22) {
-      t = Math.round(t * 26) / 26;
-      const ang = t * 4.5 * Math.PI;
-      const s = rnd() * 2 - 1;
-      o[0] = Math.cos(ang) * r * s; o[1] = t * 17; o[2] = Math.sin(ang) * r * s;
-    } else {
-      const ang = t * 4.5 * Math.PI + strand * Math.PI;
-      o[0] = Math.cos(ang) * r + gauss() * 0.28;
-      o[1] = t * 17 + gauss() * 0.28;
-      o[2] = Math.sin(ang) * r + gauss() * 0.28;
-    }
-  },
-  knot(i, n, o) {
-    const t = rnd() * TAU;
-    const r = 10.5 + 4.2 * Math.cos(3 * t);
-    randDir(tmp);
-    const j = 0.9 * Math.cbrt(rnd());
-    o[0] = r * Math.cos(2 * t) + tmp[0] * j;
-    o[1] = 5.4 * Math.sin(3 * t) + tmp[1] * j;
-    o[2] = r * Math.sin(2 * t) + tmp[2] * j;
-  },
-  lattice(i, n, o) {
-    const step = 3.4;
-    const half = 4;
-    for (let tries = 0; tries < 8; tries++) {
-      const c = [0, 0, 0].map(() => Math.round((rnd() * 2 - 1) * half));
-      if (rnd() < 0.75) {
-        const ax = (rnd() * 3) | 0;
-        c[ax] += rnd() - 0.5;
-      } else {
-        c[0] += gauss() * 0.05; c[1] += gauss() * 0.05; c[2] += gauss() * 0.05;
-      }
-      o[0] = c[0] * step; o[1] = c[1] * step; o[2] = c[2] * step;
-      if (o[0] * o[0] + o[1] * o[1] + o[2] * o[2] > 49) return;
-    }
-  },
-};
-
-export const FORMATIONS = ['nebula', 'sphere', 'helix', 'knot', 'lattice'];
-
 export function createParticles(count) {
-  const cache = {};
-  const build = (name) => {
-    if (cache[name]) return cache[name];
-    const arr = new Float32Array(count * 3);
-    const o = [0, 0, 0];
-    for (let i = 0; i < count; i++) {
-      GEN[name](i, count, o);
-      arr[i * 3] = o[0]; arr[i * 3 + 1] = o[1]; arr[i * 3 + 2] = o[2];
-    }
-    cache[name] = arr;
-    return arr;
-  };
-
-  // boot state: a wide scattered cloud that collapses into the first formation
+  // boot state: a wide scattered cloud, waiting to be told what to become
   const from = new Float32Array(count * 3);
-  const o = [0, 0, 0];
   for (let i = 0; i < count; i++) {
-    randDir(o);
-    const r = 30 + rnd() * 70;
-    from[i * 3] = o[0] * r; from[i * 3 + 1] = o[1] * r; from[i * 3 + 2] = o[2] * r;
+    const u = Math.random() * 2 - 1;
+    const a = Math.random() * Math.PI * 2;
+    const s = Math.sqrt(1 - u * u);
+    const r = 30 + Math.random() * 70;
+    from[i * 3] = s * Math.cos(a) * r; from[i * 3 + 1] = u * r; from[i * 3 + 2] = s * Math.sin(a) * r;
   }
-  const to = new Float32Array(build('nebula'));
   const seed = new Float32Array(count * 4);
-  for (let i = 0; i < seed.length; i++) seed[i] = rnd();
+  for (let i = 0; i < seed.length; i++) seed[i] = Math.random();
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(from, 3));
-  geo.setAttribute('aTo', new THREE.BufferAttribute(to, 3));
+  geo.setAttribute('aTo', new THREE.BufferAttribute(new Float32Array(from), 3));
   geo.setAttribute('aSeed', new THREE.BufferAttribute(seed, 4));
 
   const uniforms = {
     uTime: U.time, uColorA: U.colorA, uColorB: U.colorB,
     uBurstR: U.burstR, uBurstAmp: U.burstAmp,
-    uMorph: { value: 0 }, uScale: { value: 1000 }, uSize: { value: 0.085 },
+    uMorph: { value: 1 }, uScale: { value: 1000 }, uSize: { value: 0.085 },
     uMouseForce: { value: 0 }, uChaos: { value: 0 }, uOpacity: { value: 0.34 },
     uDrift: { value: 0.16 }, uSunMix: { value: 0 }, uSun: { value: new THREE.Vector3(1, 0, 0) },
+    uSplitMix: { value: 0 }, uCutN: { value: new THREE.Vector3(0, 0, 1) },
+    uHalfP: { value: new THREE.Matrix4() }, uHalfN: { value: new THREE.Matrix4() },
     uRayO: { value: new THREE.Vector3(0, 0, 999) },
     uRayD: { value: new THREE.Vector3(0, 0, -1) },
   };
@@ -189,27 +108,15 @@ export function createParticles(count) {
   }));
   points.frustumCulled = false;
 
-  let current = 'nebula';
-  let morphing = true;
+  let current = 'cloud';
+  let morphing = false;
   const inv = new THREE.Matrix4();
 
   return {
-    points, uniforms,
+    points, uniforms, count,
     get formation() { return current; },
-    setFormation(name) {
-      if (name === current || !GEN[name]) return false;
-      // whatever we were heading to becomes the new origin
-      geo.attributes.position.array.set(geo.attributes.aTo.array);
-      geo.attributes.aTo.array.set(build(name));
-      geo.attributes.position.needsUpdate = true;
-      geo.attributes.aTo.needsUpdate = true;
-      uniforms.uMorph.value = 0;
-      morphing = true;
-      current = name;
-      return true;
-    },
-    // morph to an arbitrary point set (used when the swarm becomes the continents)
-    setFormationData(name, arr) {
+    // morph to a new point set; wherever the swarm was heading becomes the starting shape
+    morphTo(name, arr) {
       geo.attributes.position.array.set(geo.attributes.aTo.array);
       geo.attributes.aTo.array.set(arr);
       geo.attributes.position.needsUpdate = true;
@@ -219,7 +126,6 @@ export function createParticles(count) {
       current = name;
     },
     follow: null, // () => yaw; when set, the swarm is locked to that rotation instead of drifting
-    count,
     setRay(ray) {
       inv.copy(points.matrixWorld).invert();
       uniforms.uRayO.value.copy(ray.origin).applyMatrix4(inv);
@@ -227,7 +133,7 @@ export function createParticles(count) {
     },
     update(dt) {
       if (this.follow) points.rotation.y = this.follow();
-      else points.rotation.y += dt * 0.035;
+      else points.rotation.y += dt * 0.02;
       if (morphing) {
         uniforms.uMorph.value = Math.min(1, uniforms.uMorph.value + dt / 2.8);
         if (uniforms.uMorph.value >= 1) morphing = false;
